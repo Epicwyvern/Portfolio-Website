@@ -1,0 +1,109 @@
+{
+  "image": "bg2.jpg",
+  "depthMap": "bg2d.webp",
+  "settings": {
+    "focus": 0.5,
+    "baseMouseSensitivity": 0.3,
+    "devicePixelRatio": 3.0,
+    "expandDepthmapRadius": 1,
+    "depthmapSize": 5000,
+    "meshDepth": 1.0,
+    "easing": 0.05,
+    "edgeWidth": 0.02,
+    "cameraZ": 1.4,
+    "extraScale": 1.0,
+    "focalPoint": {
+      "x": 0.47,
+      "y": 0.3
+    },
+    "mouseSensitivityFocusFactor": {
+      "min": 0.3,
+      "max": 0.7
+    },
+    "idleTimeout": 3000,
+    "autoMovementSpeed": 0.3,
+    "autoMovementRange": 3.0,
+    "autoMovementEnabled": true,
+    "autoMovementCircleSpeed": 0.001,
+    "returnToCenterEasing": 0.08,
+    "referenceViewport": {
+      "width": 2519,
+      "height": 1291,
+      "comment": "Reference viewport size for lantern positioning calculations (your browser maximized)"
+    }
+  },
+  "effects": {
+    "lanterns": {
+      "defaults": {
+        "scale": 1.0,
+        "opacity": 0.8,
+        "color": "0xffaa44",
+        "flickerSpeed": 1.0,
+        "glowIntensity": 0.9,
+        "rotationSpeed": 0.5,
+        "swayIntensity": 0.01,
+        "movementFactor": 1.0
+      },
+      "lanterns": [
+        {
+          "name": "tree_lantern_1",
+          "position": { "x": 0.022, "y": 0.291, "z": 0.5 },
+          "scale": 3.0,
+          "opacity": 1.0,
+          "flickerSpeed": 20.0,
+          "rotationSpeed": 0.4,
+          "movementFactor": 0.1,
+          "swayIntensity": 0.01,
+          "glowIntensity": 0.9
+        },
+        {
+          "name": "tree_lantern_2",
+          "position": { "x": -0.8, "y": -0.2, "z": 0.4 },
+          "scale": 1.2,
+          "opacity": 0.7,
+          "flickerSpeed": 1.2,
+          "rotationSpeed": 0.6,
+          "movementFactor": 1.2,
+          "swayIntensity": 0.015,
+          "glowIntensity": 0.8
+        },
+        {
+          "name": "tree_lantern_3",
+          "position": { "x": 1.2, "y": -0.3, "z": 0.35 },
+          "scale": 0.9,
+          "opacity": 0.85,
+          "flickerSpeed": 0.9,
+          "rotationSpeed": 0.3,
+          "movementFactor": 0.8,
+          "swayIntensity": 0.012,
+          "glowIntensity": 0.95
+        },
+        {
+          "name": "house_lantern_1",
+          "position": { "x": 1.8, "y": -0.8, "z": 0.5 },
+          "scale": 1.5,
+          "opacity": 1.0,
+          "flickerSpeed": 0.7,
+          "rotationSpeed": 0.8,
+          "color": "0xffcc55",
+          "movementFactor": 1.5,
+          "swayIntensity": 0.008,
+          "glowIntensity": 1.0
+        },
+        {
+          "name": "house_lantern_2",
+          "position": { "x": 2.2, "y": -0.5, "z": 0.45 },
+          "scale": 1.1,
+          "opacity": 0.9,
+          "flickerSpeed": 1.1,
+          "rotationSpeed": 0.5,
+          "movementFactor": 1.1,
+          "swayIntensity": 0.01,
+          "glowIntensity": 0.85
+        }
+      ]
+    }
+  }
+}
+
+

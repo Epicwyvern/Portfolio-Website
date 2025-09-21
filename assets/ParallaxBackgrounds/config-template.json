@@ -1,0 +1,30 @@
+{
+  "image": "your-image.jpg",
+  "depthMap": "your-depth-map.webp",
+  "settings": {
+    "focus": 0.25,
+    "baseMouseSensitivity": 0.5,
+    "devicePixelRatio": 1.0,
+    "expandDepthmapRadius": 7,
+    "depthmapSize": 1024,
+    "meshDepth": 1.0,
+    "easing": 0.05,
+    "edgeWidth": 0.02,
+    "cameraZ": 1.4,
+    "extraScale": 1.2,
+    "focalPoint": {
+      "x": 0.5,
+      "y": 0.5
+    },
+    "mouseSensitivityFocusFactor": {
+      "min": 0.3,
+      "max": 0.7
+    },
+    "idleTimeout": 3000,
+    "autoMovementSpeed": 0.3,
+    "autoMovementRange": 0.5,
+    "autoMovementEnabled": true,
+    "autoMovementCircleSpeed": 0.001,
+    "returnToCenterEasing": 0.08
+  }
+}

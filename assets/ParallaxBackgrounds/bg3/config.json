@@ -1,0 +1,30 @@
+{
+  "image": "bg3.jpg",
+  "depthMap": "bg3d.webp",
+  "settings": {
+    "focus": 0.5,
+    "baseMouseSensitivity": 0.3,
+    "devicePixelRatio": 3.0,
+    "expandDepthmapRadius": 1,
+    "depthmapSize": 5000,
+    "meshDepth": 1.0,
+    "easing": 0.05,
+    "edgeWidth": 0.02,
+    "cameraZ": 1.4,
+    "extraScale": 1.0,
+    "focalPoint": {
+      "x": 0.47,
+      "y": 0.3
+    },
+    "mouseSensitivityFocusFactor": {
+      "min": 0.3,
+      "max": 0.7
+    },
+    "idleTimeout": 3000,
+    "autoMovementSpeed": 0.3,
+    "autoMovementRange": 3.0,
+    "autoMovementEnabled": true,
+    "autoMovementCircleSpeed": 0.001,
+    "returnToCenterEasing": 0.08
+  }
+}

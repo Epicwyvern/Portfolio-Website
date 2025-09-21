@@ -1,0 +1,27 @@
+/* Parallax Background Component Styles */
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    overflow: hidden;
+    background: #000;
+    font-family: Arial, sans-serif;
+}
+
+#parallax-container {
+    width: 100vw;
+    height: 100vh;
+    position: relative;
+    overflow: hidden;
+}
+
+#parallax-canvas {
+    width: 100%;
+    height: 100%;
+    display: block;
+}
+
