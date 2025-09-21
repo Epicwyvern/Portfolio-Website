@@ -1,7 +1,7 @@
 // Base Effect Class - Common interface for all effects
 // Provides UV-to-world coordinate conversion and resource management
 
-import * as THREE from '../node_modules/three/build/three.module.js';
+import * as THREE from 'https://unpkg.com/three@0.172.0/build/three.module.js';
 
 class BaseEffect {
     constructor(scene, camera, renderer, parallaxInstance) {

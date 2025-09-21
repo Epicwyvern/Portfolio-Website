@@ -1,7 +1,7 @@
 // Effect Manager - Central system for loading and managing effects
 // Integrates with SimpleParallax to add visual effects on top of 3D parallax
 
-import * as THREE from '../node_modules/three/build/three.module.js';
+import * as THREE from 'https://unpkg.com/three@0.172.0/build/three.module.js';
 
 class EffectManager {
     constructor(scene, camera, renderer, parallaxInstance) {
