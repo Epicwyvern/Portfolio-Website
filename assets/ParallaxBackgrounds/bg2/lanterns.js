@@ -1,12 +1,21 @@
-// Lantern Effect - Flickering lanterns for bg2 magical scene
-// Uses flare_1.png for lantern glow effect
+// Lantern Effect - Twinkling and shining lanterns for bg2 magical scene
+// Uses flare_1.png for particle-based twinkling effect with growth, fade, and overlay
 
 import BaseEffect from '../../../js/base-effect.js';
 import * as THREE from 'https://unpkg.com/three@0.172.0/build/three.module.js';
 
+// Try to import GSAP, fall back to manual animations if not available
+let gsap = null;
+try {
+    gsap = await import('../../../node_modules/gsap/index.js').then(module => module.gsap);
+    console.log('LanternEffect: GSAP loaded successfully');
+} catch (error) {
+    console.log('LanternEffect: GSAP not available, using manual animations');
+}
+
 class LanternEffect extends BaseEffect {
     async init() {
-        console.log('LanternEffect: Initializing lantern effect');
+        console.log('LanternEffect: Initializing twinkling lantern effect');
         
         try {
             // IMPORTANT: Get cached canonical mesh transform for performance
@@ -24,11 +33,14 @@ class LanternEffect extends BaseEffect {
             const flareTexture = await this.loadTexture('./assets/ParallaxBackgrounds/bg2/assets/flare_1.png');
             console.log('LanternEffect: Successfully loaded flare texture');
             
+            // Store texture for creating particles
+            this.flareTexture = flareTexture;
+            
             // Load lantern configuration from parallax config
             const lanternConfig = await this.loadLanternConfig();
             console.log('LanternEffect: Loaded lantern configuration:', lanternConfig);
             
-            console.log(`LanternEffect: Creating ${lanternConfig.lanterns.length} lanterns`);
+            console.log(`LanternEffect: Creating ${lanternConfig.lanterns.length} lantern systems`);
             
             // Pre-calculate shared transformation values for performance
             const currentTransform = this.parallax.meshTransform;
@@ -37,8 +49,8 @@ class LanternEffect extends BaseEffect {
             const currentMeshWidth = currentTransform.baseGeometrySize.width * currentTransform.scale;
             const currentMeshHeight = currentTransform.baseGeometrySize.height * currentTransform.scale;
             
-            // Create lantern meshes
-            this.lanterns = [];
+            // Create lantern systems (each manages multiple particles)
+            this.lanternSystems = [];
             lanternConfig.lanterns.forEach((lanternData, index) => {
                 try {
                     // Merge with defaults
@@ -57,47 +69,27 @@ class LanternEffect extends BaseEffect {
                     const worldX = (relativeX - 0.5) * currentMeshWidth + currentTransform.position.x;
                     const worldY = (relativeY - 0.5) * currentMeshHeight + currentTransform.position.y;
                     const worldPos = new THREE.Vector3(worldX, worldY, configPos.z);
+                    
                     // Reduced logging for performance
-                    if (index === 0) console.log(`LanternEffect: Sample lantern transform - config:`, configPos, '-> world:', worldPos);
+                    if (index === 0) console.log(`LanternEffect: Sample lantern system transform - config:`, configPos, '-> world:', worldPos);
                     
-                    // Create lantern mesh
-                    const lantern = this.createPlaneMesh(
-                        0.1, // Base size - will be scaled by config
-                        0.1, 
-                        flareTexture, 
-                        worldPos,
-                        {
-                            transparent: true,
-                            alphaTest: 0.1,
-                            blending: THREE.AdditiveBlending,
-                            side: THREE.DoubleSide
-                        }
-                    );
-                    
-                    // Store lantern data for animation (including all config parameters)
-                    lantern.userData = {
+                    // Create lantern system
+                    const lanternSystem = {
                         name: config.name,
                         index: index,
-                        originalPosition: worldPos.clone(), // Current working position (changes with mesh scaling)
+                        originPosition: worldPos.clone(), // Current working position (changes with mesh scaling)
                         basePosition: configPos.clone(),    // True original position in reference viewport space (never changes)
-                        scale: config.scale,
-                        opacity: config.opacity,
-                        color: config.color,
-                        flickerSpeed: config.flickerSpeed,
-                        flickerPhase: config.flickerPhase || Math.random() * Math.PI * 2,
-                        glowIntensity: config.glowIntensity,
-                        rotationSpeed: config.rotationSpeed,
-                        swayIntensity: config.swayIntensity,
-                        movementFactor: config.movementFactor
+                        config: config,
+                        particles: [], // Array of active particles
+                        nextParticleTime: 0, // When to spawn next particle
+                        movementFactor: config.movementFactor !== undefined ? config.movementFactor : 1.0
                     };
                     
-                    this.lanterns.push(lantern);
-                    console.log(`LanternEffect: Created lantern ${index} (${config.name}) at world position:`, worldPos);
-                    console.log(`LanternEffect: Lantern ${index} scale:`, lantern.scale);
-                    console.log(`LanternEffect: Lantern ${index} visible:`, lantern.visible);
+                    this.lanternSystems.push(lanternSystem);
+                    console.log(`LanternEffect: Created lantern system ${index} (${config.name}) at world position:`, worldPos);
                     
                 } catch (error) {
-                    console.error(`LanternEffect: Error creating lantern ${index}:`, error);
+                    console.error(`LanternEffect: Error creating lantern system ${index}:`, error);
                 }
             });
             
@@ -105,7 +97,7 @@ class LanternEffect extends BaseEffect {
             this.time = 0;
             this.isInitialized = true;
             
-            console.log(`LanternEffect: Successfully initialized with ${this.lanterns.length} lanterns`);
+            console.log(`LanternEffect: Successfully initialized with ${this.lanternSystems.length} lantern systems`);
             
         } catch (error) {
             console.error('LanternEffect: Error during initialization:', error);
@@ -125,68 +117,282 @@ class LanternEffect extends BaseEffect {
         }
         
         // Update animation time
-        this.time += 0.016; // Assuming ~60fps
+        const deltaTime = 0.016; // Assuming ~60fps
+        this.time += deltaTime;
         
-        // Animate each lantern
-        this.lanterns.forEach((lantern, index) => {
+        // Update each lantern system
+        this.lanternSystems.forEach((system, systemIndex) => {
             try {
-                // Basic safety check
-                if (!lantern || !lantern.userData) {
-                    console.warn(`LanternEffect: Lantern ${index} is missing required properties`);
-                    return;
+                // Check if we need to spawn a new particle
+                if (this.time >= system.nextParticleTime && system.particles.length < system.config.count) {
+                    this.spawnParticle(system);
+                    
+                    // Schedule next particle spawn
+                    const spawnInterval = 1.0 / (system.config.newParticleSpeed || 1.0);
+                    const randomDelay = (Math.random() - 0.5) * spawnInterval * 0.5; // Add some randomness
+                    system.nextParticleTime = this.time + spawnInterval + randomDelay;
                 }
                 
-                const userData = lantern.userData;
-                
-                // Calculate rotating flicker effect to match the actual flare animation
-                const flicker = Math.sin(this.time * userData.flickerSpeed + userData.flickerPhase) * 0.4 + 0.6;
-                const rotationSpeed = userData.rotationSpeed || 1.0;
-                
-                // Rotate the lantern for the spinning cross effect
-                lantern.rotation.z = this.time * rotationSpeed + userData.flickerPhase;
-                
-                // Update opacity for flickering
-                lantern.material.opacity = flicker * userData.glowIntensity * userData.opacity;
-                
-                // For MeshBasicMaterial, we'll use color tinting for the glow effect
-                const baseColor = new THREE.Color(userData.color || 0xffaa44);
-                const glowIntensity = 0.3 + flicker * 0.7; // More dynamic glow range
-                baseColor.multiplyScalar(glowIntensity);
-                lantern.material.color = baseColor;
-                
-                // Scale pulsing synchronized with flicker
-                const sizePulse = userData.scale * (0.8 + flicker * 0.4); // Scale varies with flicker
-                lantern.scale.set(sizePulse, sizePulse, 1);
-                
-                // Subtle position swaying (like wind)
-                const swayX = Math.sin(this.time * 0.3 + userData.flickerPhase) * userData.swayIntensity;
-                const swayY = Math.cos(this.time * 0.4 + userData.flickerPhase) * userData.swayIntensity * 0.5;
-                
-                // Apply parallax movement - sync with main mesh movement
-                // The main mesh moves based on this.parallax.targetX and this.parallax.targetY
-                let parallaxOffsetX = 0;
-                let parallaxOffsetY = 0;
-                
-                if (this.parallax && this.parallax.targetX !== undefined && this.parallax.targetY !== undefined) {
-                    // Apply a depth-based parallax effect - closer objects (higher Z) move more
-                    const parallaxDepthFactor = userData.originalPosition.z * 0.5; // Depth-based scaling
-                    const movementFactor = userData.movementFactor || 1.0; // User-controllable movement scaling
-                    parallaxOffsetX = this.parallax.targetX * parallaxDepthFactor * movementFactor;
-                    parallaxOffsetY = this.parallax.targetY * parallaxDepthFactor * movementFactor;
+                // Update existing particles
+                for (let i = system.particles.length - 1; i >= 0; i--) {
+                    const particle = system.particles[i];
+                    
+                    // Update particle age
+                    particle.age += deltaTime;
+                    
+                    // Check if particle has exceeded its lifetime
+                    if (particle.age >= particle.lifetime) {
+                // Clean up GSAP animation if it exists
+                if (particle.gsapAnimation) {
+                    particle.gsapAnimation.kill();
+                    particle.gsapAnimation = null;
                 }
                 
-                lantern.position.x = userData.originalPosition.x + swayX + parallaxOffsetX;
-                lantern.position.y = userData.originalPosition.y + swayY + parallaxOffsetY;
+                // Remove particle
+                this.scene.remove(particle.mesh);
+                particle.mesh.geometry.dispose();
+                particle.mesh.material.dispose();
+                system.particles.splice(i, 1);
+                continue;
+                    }
+                    
+                    // Update particle animation
+                    this.updateParticle(particle, system);
+                }
                 
             } catch (error) {
-                console.error(`LanternEffect: Error updating lantern ${index}:`, error);
+                console.error(`LanternEffect: Error updating lantern system ${systemIndex}:`, error);
             }
         });
     }
     
+    spawnParticle(system) {
+        try {
+            // Get blend mode from config
+            const blendMode = this.getBlendMode(system.config.blendMode || 'AdditiveBlending');
+            const depthWrite = system.config.depthWrite !== undefined ? system.config.depthWrite : false;
+            const alphaTest = system.config.alphaTest || 0.01;
+            
+            // Create particle mesh with configurable blend mode
+            const particle = this.createPlaneMesh(
+                0.1, // Base size - will be scaled
+                0.1, 
+                this.flareTexture, 
+                system.originPosition.clone(),
+                {
+                    transparent: true,
+                    alphaTest: alphaTest,
+                    blending: blendMode,
+                    side: THREE.DoubleSide,
+                    depthWrite: depthWrite
+                }
+            );
+            
+            // Random rotation for this particle
+            const randomRotation = Math.random() * Math.PI * 2;
+            particle.rotation.z = randomRotation;
+            
+            // Create particle data
+            const particleData = {
+                mesh: particle,
+                age: 0,
+                lifetime: system.config.lifetime * (0.7 + Math.random() * 0.6), // Random lifetime variation
+                growthSpeed: system.config.growthSpeed || 2.0,
+                baseScale: system.config.scale || 1.0, // Base scale multiplier for the growth
+                maxOpacity: system.config.opacity || 0.8,
+                color: system.config.color || 0xffaa44,
+                initialRotation: randomRotation,
+                gsapAnimation: null, // Store GSAP animation reference
+                useGSAP: gsap !== null && (system.config.useGSAP !== false) // Allow disabling GSAP per system
+            };
+            
+            // Store reference to system for parallax movement
+            particle.userData = {
+                system: system,
+                particleData: particleData
+            };
+            
+            system.particles.push(particleData);
+            
+            // Initialize GSAP animation if available
+            if (particleData.useGSAP && gsap) {
+                this.initGSAPAnimation(particleData, system);
+            }
+            
+        } catch (error) {
+            console.error('LanternEffect: Error spawning particle:', error);
+        }
+    }
+    
+    initGSAPAnimation(particle, system) {
+        const mesh = particle.mesh;
+        const material = mesh.material;
+        
+        // Create GSAP timeline for smooth, professional animations
+        const timeline = gsap.timeline({
+            onComplete: () => {
+                // Particle will be cleaned up by the regular update loop
+                particle.gsapAnimation = null;
+            }
+        });
+        
+        // Scale animation with professional easing
+        timeline.fromTo(mesh.scale, 
+            { x: 0, y: 0, z: 1 }, // From
+            { 
+                x: particle.growthSpeed * particle.lifetime * particle.baseScale,
+                y: particle.growthSpeed * particle.lifetime * particle.baseScale,
+                z: 1,
+                duration: particle.lifetime,
+                ease: "power2.out"
+            }
+        );
+        
+        // Opacity animation with precise timing
+        timeline.fromTo(material, 
+            { opacity: 0 }, // From
+            { 
+                opacity: particle.maxOpacity,
+                duration: particle.lifetime * 0.2, // Fade in first 20%
+                ease: "power1.out"
+            }, 0 // Start immediately
+        )
+        .to(material, {
+            opacity: 0,
+            duration: particle.lifetime * 0.3, // Fade out last 30%
+            ease: "power2.in"
+        }, particle.lifetime * 0.7); // Start at 70% of lifetime
+        
+        // Optional: Subtle rotation animation
+        if (system.config.enableRotation !== false) {
+            timeline.to(mesh.rotation, {
+                z: particle.initialRotation + Math.PI * 0.5, // Quarter turn
+                duration: particle.lifetime,
+                ease: "none" // Linear rotation
+            }, 0);
+        }
+        
+        // Store reference for cleanup
+        particle.gsapAnimation = timeline;
+    }
+    
+    updateParticle(particle, system) {
+        try {
+            const mesh = particle.mesh;
+            const lifeProgress = particle.age / particle.lifetime;
+            
+            // If using GSAP, only handle position updates (GSAP handles scale/opacity)
+            if (particle.useGSAP && particle.gsapAnimation) {
+                // GSAP is handling scale and opacity animations
+                // We only need to update position for parallax movement
+            } else {
+                // Manual animation fallback
+                // Continuous growth animation: grows throughout lifetime based on growthSpeed
+                const currentScale = particle.growthSpeed * particle.age * particle.baseScale;
+                mesh.scale.set(currentScale, currentScale, 1);
+                
+                // Opacity animation: fade in, stay bright, then fade out
+                let opacityProgress;
+                if (lifeProgress < 0.2) {
+                    // Fade in phase (0 to 20% of lifetime)
+                    opacityProgress = lifeProgress / 0.2;
+                    opacityProgress = this.easeOutQuad(opacityProgress);
+                } else if (lifeProgress < 0.7) {
+                    // Bright phase (20% to 70% of lifetime)
+                    opacityProgress = 1.0;
+                } else {
+                    // Fade out phase (70% to 100% of lifetime)
+                    const fadeProgress = (lifeProgress - 0.7) / 0.3;
+                    opacityProgress = 1.0 - this.easeInQuad(fadeProgress);
+                }
+                
+                mesh.material.opacity = opacityProgress * particle.maxOpacity;
+            }
+            
+            // Color tinting for glow effect (only for manual animation to avoid conflicts with GSAP)
+            if (!(particle.useGSAP && particle.gsapAnimation)) {
+                const baseColor = new THREE.Color(particle.color);
+                const currentOpacity = mesh.material.opacity;
+                const normalizedOpacity = currentOpacity / particle.maxOpacity;
+                const glowIntensity = 0.5 + normalizedOpacity * 0.5;
+                baseColor.multiplyScalar(glowIntensity);
+                mesh.material.color = baseColor;
+            } else {
+                // For GSAP, use simple color without opacity-based intensity changes
+                mesh.material.color = new THREE.Color(particle.color);
+            }
+            
+            // Apply parallax movement - sync with main mesh movement
+            let parallaxOffsetX = 0;
+            let parallaxOffsetY = 0;
+            
+            // Only apply movement if movementFactor > 0
+            if (system.movementFactor > 0 && this.parallax && this.parallax.targetX !== undefined && this.parallax.targetY !== undefined) {
+                // Apply a depth-based parallax effect - closer objects (higher Z) move more
+                const parallaxDepthFactor = system.originPosition.z * 0.5; // Depth-based scaling
+                parallaxOffsetX = this.parallax.targetX * parallaxDepthFactor * system.movementFactor;
+                parallaxOffsetY = this.parallax.targetY * parallaxDepthFactor * system.movementFactor;
+                
+                // Debug logging for movement (only occasionally to avoid spam)
+                if (Math.random() < 0.001) { // Log 0.1% of the time
+                    console.log(`Movement debug - Factor: ${system.movementFactor}, TargetX: ${this.parallax.targetX.toFixed(3)}, OffsetX: ${parallaxOffsetX.toFixed(3)}`);
+                }
+            }
+            
+            mesh.position.x = system.originPosition.x + parallaxOffsetX;
+            mesh.position.y = system.originPosition.y + parallaxOffsetY;
+            mesh.position.z = system.originPosition.z;
+                
+            } catch (error) {
+            console.error('LanternEffect: Error updating particle:', error);
+        }
+    }
+    
+    // Blend mode configuration helper
+    getBlendMode(blendModeString) {
+        const blendModes = {
+            'NoBlending': THREE.NoBlending,
+            'NormalBlending': THREE.NormalBlending,
+            'AdditiveBlending': THREE.AdditiveBlending,
+            'SubtractiveBlending': THREE.SubtractiveBlending,
+            'MultiplyBlending': THREE.MultiplyBlending,
+            'CustomBlending': THREE.CustomBlending
+        };
+        
+        return blendModes[blendModeString] || THREE.AdditiveBlending;
+    }
+    
+    // GSAP-compatible easing functions for smooth animations
+    easeOutCubic(t) {
+        return 1 - Math.pow(1 - t, 3);
+    }
+    
+    easeInCubic(t) {
+        return t * t * t;
+    }
+    
+    easeOutQuad(t) {
+        return 1 - (1 - t) * (1 - t);
+    }
+    
+    easeInQuad(t) {
+        return t * t;
+    }
+    
+    // Advanced easing functions (can be replaced with GSAP when integrated)
+    easeInOutQuart(t) {
+        return t < 0.5 ? 8 * t * t * t * t : 1 - Math.pow(-2 * t + 2, 4) / 2;
+    }
+    
+    easeOutBack(t) {
+        const c1 = 1.70158;
+        const c3 = c1 + 1;
+        return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2);
+    }
+    
     // Update lantern positions when mesh transform changes (e.g., on window resize)
     updatePositionsForMeshTransform(meshTransform) {
-        if (!this.isInitialized || !this.lanterns || this.lanterns.length === 0) {
+        if (!this.isInitialized || !this.lanternSystems || this.lanternSystems.length === 0) {
             console.log('LanternEffect: Not ready for position updates');
             return;
         }
@@ -199,14 +405,13 @@ class LanternEffect extends BaseEffect {
             return;
         }
         
-        this.lanterns.forEach((lantern, index) => {
-            if (!lantern || !lantern.userData || !lantern.userData.basePosition) {
-                console.warn(`LanternEffect: Lantern ${index} missing required data for position update`);
+        this.lanternSystems.forEach((system, index) => {
+            if (!system || !system.basePosition) {
+                console.warn(`LanternEffect: Lantern system ${index} missing required data for position update`);
                 return;
             }
             
-            const userData = lantern.userData;
-            const basePos = userData.basePosition; // Original position in reference viewport space
+            const basePos = system.basePosition; // Original position in reference viewport space
             
             // CORRECTED APPROACH: Transform from reference viewport to current viewport
             // Use the same transformation logic as initial creation
@@ -226,17 +431,14 @@ class LanternEffect extends BaseEffect {
             const finalY = (relativeY - 0.5) * currentMeshHeight + meshTransform.position.y;
             const finalZ = basePos.z; // Z position stays the same
             
-            // Update the userData.originalPosition to reflect the new working position
-            userData.originalPosition.set(finalX, finalY, finalZ);
-            
-            // Update the lantern's actual position
-            lantern.position.set(finalX, finalY, finalZ);
+            // Update the system's origin position to reflect the new working position
+            system.originPosition.set(finalX, finalY, finalZ);
             
             // Reduced logging for performance
             if (index === 0) console.log(`LanternEffect: Sample position update - relative: (${relativeX.toFixed(3)}, ${relativeY.toFixed(3)}) -> final: (${finalX.toFixed(3)}, ${finalY.toFixed(3)}, ${finalZ.toFixed(3)})`);
         });
         
-        console.log('LanternEffect: Position update complete for all lanterns');
+        console.log('LanternEffect: Position update complete for all lantern systems');
     }
     
     // Calculate what the mesh transform would be at a canonical/reference viewport size
@@ -288,38 +490,6 @@ class LanternEffect extends BaseEffect {
         return canonicalTransform;
     }
     
-    // Transform coordinates from reference viewport space to current viewport space
-    transformFromReferenceToCurrentViewport(referencePos) {
-        // Get current mesh transform
-        const currentTransform = {
-            scale: this.parallax.meshTransform.scale,
-            position: { ...this.parallax.meshTransform.position },
-            baseGeometrySize: { ...this.parallax.meshTransform.baseGeometrySize }
-        };
-        
-        // 1. Convert reference position to relative coordinates within reference mesh
-        const refMeshWidth = this.initialMeshTransform.baseGeometrySize.width * this.initialMeshTransform.scale;
-        const refMeshHeight = this.initialMeshTransform.baseGeometrySize.height * this.initialMeshTransform.scale;
-        
-        const relativeX = (referencePos.x - this.initialMeshTransform.position.x) / refMeshWidth + 0.5;
-        const relativeY = (referencePos.y - this.initialMeshTransform.position.y) / refMeshHeight + 0.5;
-        
-        // 2. Apply relative position to current mesh dimensions
-        const currentMeshWidth = currentTransform.baseGeometrySize.width * currentTransform.scale;
-        const currentMeshHeight = currentTransform.baseGeometrySize.height * currentTransform.scale;
-        
-        const currentX = (relativeX - 0.5) * currentMeshWidth + currentTransform.position.x;
-        const currentY = (relativeY - 0.5) * currentMeshHeight + currentTransform.position.y;
-        const currentZ = referencePos.z; // Z stays the same
-        
-        // Reduced logging for performance - only log if detailed debugging needed
-        // console.log(`LanternEffect: Transform ref(${referencePos.x.toFixed(3)}, ${referencePos.y.toFixed(3)}, ${referencePos.z.toFixed(3)}) ` +
-        //            `-> rel(${relativeX.toFixed(3)}, ${relativeY.toFixed(3)}) ` +
-        //            `-> current(${currentX.toFixed(3)}, ${currentY.toFixed(3)}, ${currentZ.toFixed(3)})`);
-        
-        return new THREE.Vector3(currentX, currentY, currentZ);
-    }
-    
     // Load lantern configuration from the parallax config JSON
     async loadLanternConfig() {
         console.log('LanternEffect: Loading lantern configuration from parallax config');
@@ -362,10 +532,10 @@ class LanternEffect extends BaseEffect {
                 scale: 1.0,
                 opacity: 0.8,
                 color: 0xffaa44,
-                flickerSpeed: 1.0,
-                glowIntensity: 0.9,
-                rotationSpeed: 0.5,
-                swayIntensity: 0.01,
+                growthSpeed: 2.0,
+                count: 3,
+                lifetime: 2.0,
+                newParticleSpeed: 1.5,
                 movementFactor: 1.0
             },
             lanterns: [
@@ -375,23 +545,55 @@ class LanternEffect extends BaseEffect {
         };
     }
     
-    // Method to get lantern by name
-    getLantern(name) {
-        return this.lanterns.find(lantern => lantern.userData.name === name);
+    // Method to get lantern system by name
+    getLanternSystem(name) {
+        return this.lanternSystems.find(system => system.name === name);
     }
     
-    // Method to set all lanterns intensity
+    // Method to set global intensity for all systems
     setGlobalIntensity(intensity) {
-        this.lanterns.forEach(lantern => {
-            lantern.userData.glowIntensity = intensity;
+        this.lanternSystems.forEach(system => {
+            system.config.opacity = intensity;
+            // Update existing particles
+            system.particles.forEach(particle => {
+                particle.maxOpacity = intensity;
+            });
         });
     }
     
-    // Method to enable/disable all lanterns
+    // Method to enable/disable all lantern systems
     setEnabled(enabled) {
-        this.lanterns.forEach(lantern => {
-            lantern.visible = enabled;
+        this.lanternSystems.forEach(system => {
+            system.particles.forEach(particle => {
+                particle.mesh.visible = enabled;
+            });
         });
+    }
+    
+    // Clean up all particles and systems
+    cleanup() {
+        if (this.lanternSystems) {
+            this.lanternSystems.forEach(system => {
+                system.particles.forEach(particle => {
+                    // Clean up GSAP animations
+                    if (particle.gsapAnimation) {
+                        particle.gsapAnimation.kill();
+                        particle.gsapAnimation = null;
+                    }
+                    
+                    if (particle.mesh) {
+                        this.scene.remove(particle.mesh);
+                        if (particle.mesh.geometry) particle.mesh.geometry.dispose();
+                        if (particle.mesh.material) particle.mesh.material.dispose();
+                    }
+                });
+                system.particles = [];
+            });
+            this.lanternSystems = [];
+        }
+        
+        // Call parent cleanup
+        super.cleanup();
     }
 }
 

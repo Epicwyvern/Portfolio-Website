@@ -18,9 +18,12 @@
   "author": "EPICWYVERN",
   "license": "MIT",
   "dependencies": {
-    "three": "^0.172.0",
+    "animejs": "^3.2.1",
+    "gsap": "^3.13.0",
+    "lottie-web": "^5.12.2",
     "onnxruntime-web": "^1.20.1",
-    "protobufjs": "^7.4.0"
+    "protobufjs": "^7.4.0",
+    "three": "^0.172.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.5"
