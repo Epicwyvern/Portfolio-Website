@@ -37,7 +37,14 @@ class SimpleParallax {
                 autoMovementRange: 0.5,         // Range of automatic movement
                 autoMovementEnabled: true,      // Enable/disable automatic movement
                 autoMovementCircleSpeed: 0.001, // Speed of circular movement (lower = slower)
-                returnToCenterEasing: 0.08      // Easing speed for return to center animation
+                returnToCenterEasing: 0.08,     // Easing speed for return to center animation
+                
+                // === DEVICE ORIENTATION SETTINGS ===
+                orientationSensitivity: 0.8,    // Sensitivity for device orientation (0-2)
+                orientationThreshold: 5,        // Minimum tilt angle to start movement (degrees)
+                orientationMaxAngle: 45,        // Maximum tilt angle for full movement (degrees)
+                orientationEnabled: true,       // Enable device orientation on mobile devices
+                orientationFallbackToTouch: true // Fallback to touch if orientation not available
             }
         };
         
@@ -47,6 +54,16 @@ class SimpleParallax {
         this.targetX = 0;
         this.targetY = 0;
         this.easing = 0.05;
+        
+        // Device orientation tracking
+        this.orientationX = 0;
+        this.orientationY = 0;
+        this.orientationSupported = false;
+        this.orientationPermissionGranted = false;
+        
+        // Device detection
+        this.isMobile = this.detectMobileDevice();
+        this.useOrientation = this.isMobile; // Default to orientation on mobile
         
         // Lock mechanism for debugging
         this.isLocked = false;
@@ -100,6 +117,13 @@ class SimpleParallax {
         this.autoMovementEnabled = s.autoMovementEnabled !== false;
         this.autoMovementCircleSpeed = s.autoMovementCircleSpeed || 0.001;
         this.returnToCenterEasing = s.returnToCenterEasing || 0.08;
+        
+        // Device orientation settings
+        this.orientationSensitivity = s.orientationSensitivity || 0.8;
+        this.orientationThreshold = s.orientationThreshold || 5;
+        this.orientationMaxAngle = s.orientationMaxAngle || 45;
+        this.orientationEnabled = s.orientationEnabled !== false;
+        this.orientationFallbackToTouch = s.orientationFallbackToTouch !== false;
     }
 
     extractImageName(imagePath) {
@@ -132,6 +156,122 @@ class SimpleParallax {
         }
     }
 
+    detectMobileDevice() {
+        // Check for mobile device using multiple methods
+        const userAgent = navigator.userAgent.toLowerCase();
+        const isMobileUserAgent = /android|webos|iphone|ipad|ipod|blackberry|iemobile|opera mini/.test(userAgent);
+        const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+        const isSmallScreen = window.innerWidth <= 768 || window.innerHeight <= 768;
+        
+        return isMobileUserAgent || (isTouchDevice && isSmallScreen);
+    }
+
+    async requestOrientationPermission() {
+        // For iOS 13+ and other browsers that require permission
+        if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+            try {
+                const permission = await DeviceOrientationEvent.requestPermission();
+                this.orientationPermissionGranted = permission === 'granted';
+                
+                if (this.orientationPermissionGranted) {
+                    console.log('Device orientation permission granted');
+                    this.setupOrientationListeners();
+                } else {
+                    console.log('Device orientation permission denied');
+                    this.handleOrientationFallback();
+                }
+            } catch (error) {
+                console.log('Error requesting orientation permission:', error);
+                this.handleOrientationFallback();
+            }
+        } else if (typeof DeviceOrientationEvent !== 'undefined') {
+            // Older browsers or Android - no permission needed
+            this.orientationPermissionGranted = true;
+            this.orientationSupported = true;
+            console.log('Device orientation available without permission');
+            this.setupOrientationListeners();
+        } else {
+            console.log('Device orientation not supported');
+            this.handleOrientationFallback();
+        }
+    }
+
+    setupOrientationListeners() {
+        if (!this.orientationPermissionGranted) return;
+        
+        console.log('Setting up device orientation listeners');
+        
+        window.addEventListener('deviceorientation', (event) => {
+            if (this.isLocked || !this.useOrientation) return;
+            
+            // Handle device orientation
+            this.handleDeviceOrientation(event);
+        }, true);
+        
+        // Test if we're actually getting orientation data
+        setTimeout(() => {
+            if (this.orientationX === 0 && this.orientationY === 0) {
+                console.log('No orientation data received, falling back to touch');
+                this.handleOrientationFallback();
+            } else {
+                this.orientationSupported = true;
+                console.log('Device orientation working correctly');
+            }
+        }, 2000);
+    }
+
+    handleDeviceOrientation(event) {
+        // Get orientation values
+        const { alpha, beta, gamma } = event;
+        
+        // Skip if values are null (some browsers)
+        if (beta === null || gamma === null) return;
+        
+        // Store raw values for debugging
+        this.orientationAlpha = alpha;
+        this.orientationBeta = beta;
+        this.orientationGamma = gamma;
+        
+        // Map gamma (left-right tilt) to X movement (-90 to +90 degrees)
+        // Map beta (front-back tilt) to Y movement (we want -90 to +90 range)
+        
+        // Normalize gamma: -90 to +90 -> -1 to +1
+        let normalizedX = Math.max(-1, Math.min(1, gamma / this.orientationMaxAngle));
+        
+        // Normalize beta: we want forward tilt (negative beta) to move up
+        // Beta ranges from -180 to 180, but we care about -90 to +90
+        let adjustedBeta = beta;
+        if (adjustedBeta > 90) adjustedBeta = 180 - adjustedBeta;
+        if (adjustedBeta < -90) adjustedBeta = -180 - adjustedBeta;
+        
+        let normalizedY = Math.max(-1, Math.min(1, -adjustedBeta / this.orientationMaxAngle));
+        
+        // Apply threshold - only move if tilt exceeds minimum angle
+        const thresholdX = this.orientationThreshold / this.orientationMaxAngle;
+        const thresholdY = this.orientationThreshold / this.orientationMaxAngle;
+        
+        if (Math.abs(normalizedX) < thresholdX) normalizedX = 0;
+        if (Math.abs(normalizedY) < thresholdY) normalizedY = 0;
+        
+        // Apply sensitivity
+        this.orientationX = normalizedX * this.orientationSensitivity;
+        this.orientationY = normalizedY * this.orientationSensitivity;
+        
+        // Update last move time to prevent auto-movement
+        this.lastMouseMoveTime = Date.now();
+        this.mouseOnScreen = true; // Treat orientation as "mouse on screen"
+    }
+
+    handleOrientationFallback() {
+        if (this.orientationFallbackToTouch && this.isMobile) {
+            console.log('Using touch controls as fallback');
+            this.useOrientation = false;
+            // Touch events are already set up in setupEventListeners()
+        } else {
+            console.log('No orientation or touch fallback available');
+        }
+    }
+
     async init() {
         // Load configuration first (with default image path)
         await this.loadConfig();
@@ -159,8 +299,16 @@ class SimpleParallax {
         this.effectManager = new EffectManager(this.scene, this.camera, this.renderer, this);
         await this.effectManager.loadEffects();
         
-        // Setup event listeners
+        // Setup input event listeners
         this.setupEventListeners();
+        
+        // Setup device orientation if on mobile
+        if (this.isMobile && this.orientationEnabled) {
+            console.log('Mobile device detected, setting up orientation controls');
+            await this.requestOrientationPermission();
+        } else {
+            console.log('Desktop device detected, using mouse controls');
+        }
         
         // Start animation loop
         this.animate();
@@ -411,10 +559,10 @@ class SimpleParallax {
     }
 
     setupEventListeners() {
-        // Mouse movement
+        // Mouse movement (always enabled for desktop, disabled for mobile if orientation is working)
         document.addEventListener('mousemove', (event) => {
-            // Skip mouse tracking if locked
-            if (this.isLocked) return;
+            // Skip mouse tracking if locked or if mobile is using orientation
+            if (this.isLocked || (this.isMobile && this.useOrientation && this.orientationSupported)) return;
             
             this.mouseOnScreen = true;
             this.lastMouseMoveTime = Date.now();
@@ -425,22 +573,26 @@ class SimpleParallax {
             this.mouseX = -this.mouseX;
         });
 
-        // Mouse leave detection
+        // Mouse leave detection (only relevant for desktop)
         document.addEventListener('mouseleave', () => {
-            this.mouseOnScreen = false;
-            this.resetToCenter();
+            if (!this.isMobile || !this.useOrientation) {
+                this.mouseOnScreen = false;
+                this.resetToCenter();
+            }
         });
 
-        // Mouse enter detection
+        // Mouse enter detection (only relevant for desktop)
         document.addEventListener('mouseenter', () => {
-            this.mouseOnScreen = true;
-            this.lastMouseMoveTime = Date.now();
+            if (!this.isMobile || !this.useOrientation) {
+                this.mouseOnScreen = true;
+                this.lastMouseMoveTime = Date.now();
+            }
         });
 
-        // Touch support
+        // Touch support (enabled for mobile when not using orientation, or as fallback)
         document.addEventListener('touchmove', (event) => {
-            // Skip touch tracking if locked
-            if (this.isLocked) return;
+            // Skip touch tracking if locked or if orientation is being used
+            if (this.isLocked || (this.useOrientation && this.orientationSupported)) return;
             
             this.mouseOnScreen = true;
             this.lastMouseMoveTime = Date.now();
@@ -450,6 +602,14 @@ class SimpleParallax {
             this.mouseX = Math.min(1, Math.max(-1, (touch.clientX - rect.left) / window.innerWidth * 2 - 1));
             this.mouseY = Math.min(1, Math.max(-1, (touch.clientY - rect.top) / window.innerHeight * 2 - 1));
             this.mouseX = -this.mouseX;
+        });
+        
+        // Touch end - reset to center for mobile touch controls
+        document.addEventListener('touchend', () => {
+            if (this.isMobile && !this.useOrientation) {
+                this.mouseOnScreen = false;
+                this.resetToCenter();
+            }
         });
 
         // Window resize
@@ -528,16 +688,23 @@ class SimpleParallax {
         // Update auto-movement
         this.updateAutoMovement();
 
-        // Smooth mouse movement (only when mouse is on screen and not locked)
-        if (this.mouseOnScreen && !this.isLocked) {
-            const mouseSensitivityFocusFactor = this.mouseSensitivityFocusFactor.min + 
-                (this.mouseSensitivityFocusFactor.max - this.mouseSensitivityFocusFactor.min) * 2 * this.focus;
-            this.targetX += (mouseSensitivityFocusFactor * this.mouseX * this.baseMouseSensitivity - this.targetX) * this.easing;
-            this.targetY += (mouseSensitivityFocusFactor * this.mouseY * this.baseMouseSensitivity - this.targetY) * this.easing;
-        } else if (!this.isLocked) {
-            // When mouse is off screen, smoothly return to center with dedicated easing (only if not locked)
-            this.targetX += (0 - this.targetX) * this.returnToCenterEasing;
-            this.targetY += (0 - this.targetY) * this.returnToCenterEasing;
+        // Handle input based on device type and available methods
+        if (!this.isLocked) {
+            if (this.isMobile && this.useOrientation && this.orientationSupported) {
+                // Use device orientation for mobile
+                this.targetX += (this.orientationX - this.targetX) * this.easing;
+                this.targetY += (this.orientationY - this.targetY) * this.easing;
+            } else if (this.mouseOnScreen) {
+                // Use mouse/touch movement
+                const mouseSensitivityFocusFactor = this.mouseSensitivityFocusFactor.min + 
+                    (this.mouseSensitivityFocusFactor.max - this.mouseSensitivityFocusFactor.min) * 2 * this.focus;
+                this.targetX += (mouseSensitivityFocusFactor * this.mouseX * this.baseMouseSensitivity - this.targetX) * this.easing;
+                this.targetY += (mouseSensitivityFocusFactor * this.mouseY * this.baseMouseSensitivity - this.targetY) * this.easing;
+            } else {
+                // Return to center when no input is active
+                this.targetX += (0 - this.targetX) * this.returnToCenterEasing;
+                this.targetY += (0 - this.targetY) * this.returnToCenterEasing;
+            }
         }
 
         if (this.mesh && this.uniforms && this.uniforms.mouseDelta) {
