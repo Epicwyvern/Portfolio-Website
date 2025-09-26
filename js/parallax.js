@@ -40,9 +40,9 @@ class SimpleParallax {
                 returnToCenterEasing: 0.08,     // Easing speed for return to center animation
                 
                 // === DEVICE ORIENTATION SETTINGS ===
-                orientationSensitivity: 0.8,    // Sensitivity for device orientation (0-2)
+                orientationSensitivity: 1.0,    // Sensitivity for device orientation (matches mouse 1:1 by default)
                 orientationThreshold: 5,        // Minimum tilt angle to start movement (degrees)
-                orientationMaxAngle: 45,        // Maximum tilt angle for full movement (degrees)
+                orientationMaxAngle: 30,        // Maximum tilt angle for full movement (degrees) - reduced for comfort
                 orientationEnabled: true,       // Enable device orientation on mobile devices
                 orientationFallbackToTouch: true // Fallback to touch if orientation not available
             }
@@ -119,9 +119,9 @@ class SimpleParallax {
         this.returnToCenterEasing = s.returnToCenterEasing || 0.08;
         
         // Device orientation settings
-        this.orientationSensitivity = s.orientationSensitivity || 0.8;
+        this.orientationSensitivity = s.orientationSensitivity || 1.0;
         this.orientationThreshold = s.orientationThreshold || 5;
-        this.orientationMaxAngle = s.orientationMaxAngle || 45;
+        this.orientationMaxAngle = s.orientationMaxAngle || 30;
         this.orientationEnabled = s.orientationEnabled !== false;
         this.orientationFallbackToTouch = s.orientationFallbackToTouch !== false;
     }
@@ -253,7 +253,8 @@ class SimpleParallax {
         if (Math.abs(normalizedX) < thresholdX) normalizedX = 0;
         if (Math.abs(normalizedY) < thresholdY) normalizedY = 0;
         
-        // Apply sensitivity
+        // Apply orientation sensitivity (but keep it reasonable to work with existing mouse sensitivity)
+        // The orientation sensitivity should be more like a multiplier rather than direct replacement
         this.orientationX = normalizedX * this.orientationSensitivity;
         this.orientationY = normalizedY * this.orientationSensitivity;
         
@@ -691,9 +692,13 @@ class SimpleParallax {
         // Handle input based on device type and available methods
         if (!this.isLocked) {
             if (this.isMobile && this.useOrientation && this.orientationSupported) {
-                // Use device orientation for mobile
-                this.targetX += (this.orientationX - this.targetX) * this.easing;
-                this.targetY += (this.orientationY - this.targetY) * this.easing;
+                // Use device orientation for mobile - apply same sensitivity system as mouse
+                const mouseSensitivityFocusFactor = this.mouseSensitivityFocusFactor.min + 
+                    (this.mouseSensitivityFocusFactor.max - this.mouseSensitivityFocusFactor.min) * 2 * this.focus;
+                const orientationInputX = this.orientationX * mouseSensitivityFocusFactor * this.baseMouseSensitivity;
+                const orientationInputY = this.orientationY * mouseSensitivityFocusFactor * this.baseMouseSensitivity;
+                this.targetX += (orientationInputX - this.targetX) * this.easing;
+                this.targetY += (orientationInputY - this.targetY) * this.easing;
             } else if (this.mouseOnScreen) {
                 // Use mouse/touch movement
                 const mouseSensitivityFocusFactor = this.mouseSensitivityFocusFactor.min + 
