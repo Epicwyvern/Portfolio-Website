@@ -33,7 +33,7 @@
     },
     "orientationSensitivity": 2.0,
     "orientationThreshold": 8,
-    "orientationMaxAngle": 10,
+    "orientationMaxAngle": 1,
     "orientationEnabled": true,
     "orientationFallbackToTouch": true
   },
