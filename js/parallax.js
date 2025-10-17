@@ -118,10 +118,10 @@ class SimpleParallax {
         this.autoMovementCircleSpeed = s.autoMovementCircleSpeed || 0.001;
         this.returnToCenterEasing = s.returnToCenterEasing || 0.08;
         
-        // Device orientation settings
-        this.orientationSensitivity = s.orientationSensitivity || 1.0;
-        this.orientationThreshold = s.orientationThreshold || 5;
-        this.orientationMaxAngle = s.orientationMaxAngle || 30;
+        // Device orientation settings (read from config file, with fallback defaults)
+        this.orientationSensitivity = s.orientationSensitivity !== undefined ? s.orientationSensitivity : 1.0;
+        this.orientationThreshold = s.orientationThreshold !== undefined ? s.orientationThreshold : 5;
+        this.orientationMaxAngle = s.orientationMaxAngle !== undefined ? s.orientationMaxAngle : 30;
         this.orientationEnabled = s.orientationEnabled !== false;
         this.orientationFallbackToTouch = s.orientationFallbackToTouch !== false;
     }

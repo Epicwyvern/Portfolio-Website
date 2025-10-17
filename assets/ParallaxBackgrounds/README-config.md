@@ -99,6 +99,30 @@ This system allows you to customize the parallax behavior for each background im
   - `min` (0.1 - 0.5): Minimum sensitivity multiplier
   - `max` (0.5 - 1.0): Maximum sensitivity multiplier
 
+### Device Orientation Settings (Mobile Tilt Controls)
+- **`orientationSensitivity`** (0.1 - 2.0): Sensitivity for device tilt movement
+  - `0.1` = Very subtle tilt response
+  - `1.0` = 1:1 ratio with mouse sensitivity (recommended)
+  - `2.0` = Very responsive to small tilts
+
+- **`orientationThreshold`** (1 - 15): Minimum tilt angle to start movement (degrees)
+  - `1` = Responds to very small tilts
+  - `5` = Moderate threshold (recommended)
+  - `15` = Only responds to significant tilts
+
+- **`orientationMaxAngle`** (15 - 60): Maximum tilt angle for full movement (degrees)
+  - `15` = Full movement with small tilts (sensitive)
+  - `30` = Comfortable range (recommended)
+  - `60` = Requires large tilts for full movement
+
+- **`orientationEnabled`** (true/false): Enable device orientation controls
+  - `true` = Enable tilt controls on mobile devices
+  - `false` = Disable tilt controls, use touch instead
+
+- **`orientationFallbackToTouch`** (true/false): Fallback to touch if orientation unavailable
+  - `true` = Use touch controls if orientation fails (recommended)
+  - `false` = No fallback, orientation only
+
 ## Usage Examples
 
 ### Subtle Parallax (for portraits)
@@ -132,6 +156,19 @@ This system allows you to customize the parallax behavior for each background im
     "meshResolution": 512,
     "devicePixelRatio": 0.8,
     "expandDepthmapRadius": 3
+  }
+}
+```
+
+### Mobile Tilt Controls (comfortable orientation)
+```json
+{
+  "settings": {
+    "orientationSensitivity": 0.4,
+    "orientationThreshold": 8,
+    "orientationMaxAngle": 25,
+    "orientationEnabled": true,
+    "orientationFallbackToTouch": true
   }
 }
 ```

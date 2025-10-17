@@ -25,6 +25,13 @@
     "autoMovementRange": 0.5,
     "autoMovementEnabled": true,
     "autoMovementCircleSpeed": 0.001,
-    "returnToCenterEasing": 0.08
+    "returnToCenterEasing": 0.08,
+    
+    "_comment_orientation": "Device orientation settings for mobile tilt controls",
+    "orientationSensitivity": 1.0,
+    "orientationThreshold": 5,
+    "orientationMaxAngle": 30,
+    "orientationEnabled": true,
+    "orientationFallbackToTouch": true
   }
 }

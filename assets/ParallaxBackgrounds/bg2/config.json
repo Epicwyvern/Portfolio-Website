@@ -30,7 +30,12 @@
       "width": 2519,
       "height": 1291,
       "comment": "Reference viewport size for lantern positioning calculations (your browser maximized)"
-    }
+    },
+    "orientationSensitivity": 0.4,
+    "orientationThreshold": 8,
+    "orientationMaxAngle": 25,
+    "orientationEnabled": true,
+    "orientationFallbackToTouch": true
   },
   "effects": {
     "lanterns": {
