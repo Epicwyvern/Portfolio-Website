@@ -32,8 +32,8 @@
       "comment": "Reference viewport size for lantern positioning calculations (your browser maximized)"
     },
     "orientationSensitivity": 2.0,
-    "orientationThreshold": 8,
-    "orientationMaxAngle": 1,
+    "orientationThreshold": 1,
+    "orientationMaxAngle": 15,
     "orientationEnabled": true,
     "orientationFallbackToTouch": true
   },
