@@ -35,7 +35,7 @@
     "orientationThreshold": 1,
     "orientationMaxAngle": 15,
     "orientationEnabled": true,
-    "orientationFallbackToTouch": true
+    "orientationFallbackToTouch": false
   },
   "effects": {
     "lanterns": {
