@@ -60,10 +60,15 @@ class SimpleParallax {
         this.orientationY = 0;
         this.orientationSupported = false;
         this.orientationPermissionGranted = false;
+        this.orientationPermissionRequested = false;
+        this.orientationBaseline = null;
+        this.orientationBaselineSamples = [];
+        this.orientationDataReceived = false;
         
         // Device detection
+        this.isTouchDevice = this.detectTouchDevice();
         this.isMobile = this.detectMobileDevice();
-        this.useOrientation = this.isMobile; // Default to orientation on mobile
+        this.useOrientation = this.isMobile; // Default to orientation on narrow touch devices
         
         // Lock mechanism for debugging
         this.isLocked = false;
@@ -157,13 +162,38 @@ class SimpleParallax {
     }
 
     detectMobileDevice() {
-        // Check for mobile device using multiple methods
-        const userAgent = navigator.userAgent.toLowerCase();
-        const isMobileUserAgent = /android|webos|iphone|ipad|ipod|blackberry|iemobile|opera mini/.test(userAgent);
-        const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
-        const isSmallScreen = window.innerWidth <= 768 || window.innerHeight <= 768;
+        // Use width-based breakpoints for tilt on small touch devices
+        const isSmallViewport = window.innerWidth < 768;
+        return this.isTouchDevice && isSmallViewport;
+    }
+
+    detectTouchDevice() {
+        return 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+    }
+
+    updateInputModeFromViewport() {
+        const wasMobile = this.isMobile;
+        this.isTouchDevice = this.detectTouchDevice();
+        this.isMobile = this.detectMobileDevice();
+        this.useOrientation = this.isMobile && this.orientationEnabled;
         
-        return isMobileUserAgent || (isTouchDevice && isSmallScreen);
+        if (!this.isMobile) {
+            // Clear baseline when switching away from tilt mode
+            this.orientationBaseline = null;
+            this.orientationBaselineSamples = [];
+        }
+        
+        if (wasMobile !== this.isMobile) {
+            console.log(`Input mode updated: ${this.isMobile ? 'tilt (mobile)' : 'mouse/touch (tablet/desktop)'}`);
+        }
+
+        if (this.isMobile && this.orientationEnabled) {
+            const needsPermission = typeof DeviceOrientationEvent !== 'undefined' &&
+                typeof DeviceOrientationEvent.requestPermission === 'function';
+            if (!needsPermission && !this.orientationPermissionGranted) {
+                this.requestOrientationPermission();
+            }
+        }
     }
 
     async requestOrientationPermission() {
@@ -200,6 +230,8 @@ class SimpleParallax {
         if (!this.orientationPermissionGranted) return;
         
         console.log('Setting up device orientation listeners');
+        this.orientationBaseline = null;
+        this.orientationBaselineSamples = [];
         
         window.addEventListener('deviceorientation', (event) => {
             if (this.isLocked || !this.useOrientation) return;
@@ -210,7 +242,7 @@ class SimpleParallax {
         
         // Test if we're actually getting orientation data
         setTimeout(() => {
-            if (this.orientationX === 0 && this.orientationY === 0) {
+            if (!this.orientationDataReceived) {
                 console.log('No orientation data received, falling back to touch');
                 this.handleOrientationFallback();
             } else {
@@ -226,6 +258,29 @@ class SimpleParallax {
         
         // Skip if values are null (some browsers)
         if (beta === null || gamma === null) return;
+        this.orientationDataReceived = true;
+
+        // Initialize baseline from first few samples (normal viewing angle)
+        if (!this.orientationBaseline) {
+            this.orientationBaselineSamples.push({ beta, gamma });
+            if (this.orientationBaselineSamples.length < 8) {
+                return;
+            }
+            const sampleCount = this.orientationBaselineSamples.length;
+            const avg = this.orientationBaselineSamples.reduce(
+                (acc, sample) => {
+                    acc.beta += sample.beta;
+                    acc.gamma += sample.gamma;
+                    return acc;
+                },
+                { beta: 0, gamma: 0 }
+            );
+            this.orientationBaseline = {
+                beta: avg.beta / sampleCount,
+                gamma: avg.gamma / sampleCount
+            };
+            this.orientationBaselineSamples = [];
+        }
         
         // Store raw values for debugging
         this.orientationAlpha = alpha;
@@ -236,11 +291,12 @@ class SimpleParallax {
         // Map beta (front-back tilt) to Y movement (we want -90 to +90 range)
         
         // Normalize gamma: -90 to +90 -> -1 to +1
-        let normalizedX = Math.max(-1, Math.min(1, gamma / this.orientationMaxAngle));
+        const adjustedGamma = gamma - (this.orientationBaseline?.gamma || 0);
+        let normalizedX = Math.max(-1, Math.min(1, adjustedGamma / this.orientationMaxAngle));
         
         // Normalize beta: we want forward tilt (negative beta) to move up
         // Beta ranges from -180 to 180, but we care about -90 to +90
-        let adjustedBeta = beta;
+        let adjustedBeta = beta - (this.orientationBaseline?.beta || 0);
         if (adjustedBeta > 90) adjustedBeta = 180 - adjustedBeta;
         if (adjustedBeta < -90) adjustedBeta = -180 - adjustedBeta;
         
@@ -276,6 +332,7 @@ class SimpleParallax {
     async init() {
         // Load configuration first (with default image path)
         await this.loadConfig();
+        this.updateInputModeFromViewport();
         
         // Initialize Three.js
         this.scene = new THREE.Scene();
@@ -306,9 +363,15 @@ class SimpleParallax {
         // Setup device orientation if on mobile
         if (this.isMobile && this.orientationEnabled) {
             console.log('Mobile device detected, setting up orientation controls');
-            await this.requestOrientationPermission();
+            const needsPermission = typeof DeviceOrientationEvent !== 'undefined' &&
+                typeof DeviceOrientationEvent.requestPermission === 'function';
+            if (!needsPermission) {
+                await this.requestOrientationPermission();
+            } else {
+                console.log('Orientation permission requires user gesture; waiting for touch');
+            }
         } else {
-            console.log('Desktop device detected, using mouse controls');
+            console.log('Desktop/tablet detected, using mouse/touch controls');
         }
         
         // Start animation loop
@@ -560,6 +623,14 @@ class SimpleParallax {
     }
 
     setupEventListeners() {
+        // Attempt orientation permission on first user gesture (iOS requirement)
+        document.addEventListener('touchstart', async () => {
+            if (!this.isMobile || !this.useOrientation || !this.orientationEnabled) return;
+            if (this.orientationPermissionGranted || this.orientationPermissionRequested) return;
+            this.orientationPermissionRequested = true;
+            await this.requestOrientationPermission();
+        }, { passive: true });
+
         // Mouse movement (always enabled for desktop, disabled for mobile if orientation is working)
         document.addEventListener('mousemove', (event) => {
             // Skip mouse tracking if locked or if mobile is using orientation
@@ -607,7 +678,7 @@ class SimpleParallax {
         
         // Touch end - reset to center for mobile touch controls
         document.addEventListener('touchend', () => {
-            if (this.isMobile && !this.useOrientation) {
+            if (this.isTouchDevice && !this.useOrientation) {
                 this.mouseOnScreen = false;
                 this.resetToCenter();
             }
@@ -615,6 +686,7 @@ class SimpleParallax {
 
         // Window resize
         window.addEventListener('resize', () => {
+            this.updateInputModeFromViewport();
             this.camera.aspect = window.innerWidth / window.innerHeight;
             this.camera.updateProjectionMatrix();
             this.renderer.setSize(window.innerWidth, window.innerHeight);
