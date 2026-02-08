@@ -55,6 +55,9 @@ memory-bank/
 # Old/reference files (not needed for production)
 old/
 
+# Custom assets (local only)
+assets/ParallaxBackgrounds/bg2/assets/fantasy_custom/
+
 # Test files (not needed for production hosting)
 test-*.html
 *.test.js

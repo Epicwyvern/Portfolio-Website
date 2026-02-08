@@ -3,9 +3,15 @@
 
 import * as THREE from 'https://unpkg.com/three@0.172.0/build/three.module.js';
 
+const log = (...args) => {
+    if (window.location.pathname.endsWith('test-effects.html')) {
+        console.log(...args);
+    }
+};
+
 class BaseEffect {
     constructor(scene, camera, renderer, parallaxInstance) {
-        console.log('BaseEffect: Initializing base effect');
+        log('BaseEffect: Initializing base effect');
         
         this.scene = scene;
         this.camera = camera;
@@ -17,12 +23,12 @@ class BaseEffect {
         this.textures = []; // Store textures for cleanup
         this.isInitialized = false;
         
-        console.log('BaseEffect: Base effect initialized');
+        log('BaseEffect: Base effect initialized');
     }
     
     // Abstract method to be implemented by specific effects
     async init() {
-        console.log('BaseEffect: init() called - must be implemented by effect class');
+        log('BaseEffect: init() called - must be implemented by effect class');
         throw new Error('init() must be implemented by effect class');
     }
     
@@ -32,7 +38,7 @@ class BaseEffect {
     }
     
     cleanup() {
-        console.log(`BaseEffect: Cleaning up ${this.meshes.length} meshes, ${this.materials.length} materials, ${this.textures.length} textures`);
+        log(`BaseEffect: Cleaning up ${this.meshes.length} meshes, ${this.materials.length} materials, ${this.textures.length} textures`);
         
         // Clean up all meshes
         this.meshes.forEach((mesh, index) => {
@@ -41,7 +47,7 @@ class BaseEffect {
                 if (mesh.geometry) {
                     mesh.geometry.dispose();
                 }
-                console.log(`BaseEffect: Cleaned up mesh ${index}`);
+                log(`BaseEffect: Cleaned up mesh ${index}`);
             } catch (error) {
                 console.error(`BaseEffect: Error cleaning up mesh ${index}:`, error);
             }
@@ -51,7 +57,7 @@ class BaseEffect {
         this.materials.forEach((material, index) => {
             try {
                 material.dispose();
-                console.log(`BaseEffect: Cleaned up material ${index}`);
+                log(`BaseEffect: Cleaned up material ${index}`);
             } catch (error) {
                 console.error(`BaseEffect: Error cleaning up material ${index}:`, error);
             }
@@ -61,7 +67,7 @@ class BaseEffect {
         this.textures.forEach((texture, index) => {
             try {
                 texture.dispose();
-                console.log(`BaseEffect: Cleaned up texture ${index}`);
+                log(`BaseEffect: Cleaned up texture ${index}`);
             } catch (error) {
                 console.error(`BaseEffect: Error cleaning up texture ${index}:`, error);
             }
@@ -73,12 +79,12 @@ class BaseEffect {
         this.textures = [];
         this.isInitialized = false;
         
-        console.log('BaseEffect: Cleanup complete');
+        log('BaseEffect: Cleanup complete');
     }
     
     // Helper method to create plane meshes
     createPlaneMesh(width, height, texture, position = {x: 0, y: 0, z: 0}, options = {}) {
-        console.log(`BaseEffect: Creating plane mesh at position (${position.x}, ${position.y}, ${position.z})`);
+        log(`BaseEffect: Creating plane mesh at position (${position.x}, ${position.y}, ${position.z})`);
         
         const geometry = new THREE.PlaneGeometry(width, height);
         const material = new THREE.MeshBasicMaterial({
@@ -98,20 +104,20 @@ class BaseEffect {
         
         this.scene.add(mesh);
         
-        console.log(`BaseEffect: Plane mesh created and added to scene`);
+        log(`BaseEffect: Plane mesh created and added to scene`);
         return mesh;
     }
     
     // Helper method to load textures
     async loadTexture(texturePath) {
-        console.log(`BaseEffect: Loading texture from ${texturePath}`);
+        log(`BaseEffect: Loading texture from ${texturePath}`);
         
         return new Promise((resolve, reject) => {
             const textureLoader = new THREE.TextureLoader();
             textureLoader.load(
                 texturePath,
                 (texture) => {
-                    console.log(`BaseEffect: Successfully loaded texture: ${texturePath}`);
+                    log(`BaseEffect: Successfully loaded texture: ${texturePath}`);
                     resolve(texture);
                 },
                 undefined,
@@ -125,7 +131,7 @@ class BaseEffect {
     
     // CORRECTED UV-to-World coordinate conversion
     uvToWorldPosition(u, v, zDepth = 0) {
-        console.log(`BaseEffect: Converting UV (${u}, ${v}) to world position at z=${zDepth}`);
+        log(`BaseEffect: Converting UV (${u}, ${v}) to world position at z=${zDepth}`);
         
         if (!this.parallax || !this.parallax.depthData || !this.parallax.mesh) {
             console.error('BaseEffect: Parallax instance or mesh not available for UV conversion');
@@ -139,8 +145,8 @@ class BaseEffect {
             const visibleHeight = 2 * Math.tan(THREE.MathUtils.degToRad(45/2)) * this.camera.position.z;
             const visibleWidth = visibleHeight * this.camera.aspect;
             
-            console.log(`BaseEffect: Container aspect: ${containerAspect}, Image aspect: ${imageAspect}`);
-            console.log(`BaseEffect: Visible dimensions: ${visibleWidth} x ${visibleHeight}`);
+            log(`BaseEffect: Container aspect: ${containerAspect}, Image aspect: ${imageAspect}`);
+            log(`BaseEffect: Visible dimensions: ${visibleWidth} x ${visibleHeight}`);
             
             // Calculate the same baseScale as the main mesh
             let baseScale;
@@ -151,7 +157,7 @@ class BaseEffect {
             }
             
             const finalScale = baseScale * this.parallax.extraScale;
-            console.log(`BaseEffect: Base scale: ${baseScale}, Final scale: ${finalScale}`);
+            log(`BaseEffect: Base scale: ${baseScale}, Final scale: ${finalScale}`);
             
             // Calculate scaled mesh dimensions (same as main mesh)
             const scaledMeshWidth = this.parallax.mesh.geometry.parameters.width * finalScale;
@@ -165,8 +171,8 @@ class BaseEffect {
             const meshOffsetX = (0.5 - this.parallax.focalPoint.x) * overflowX;
             const meshOffsetY = (0.5 - this.parallax.focalPoint.y) * overflowY;
             
-            console.log(`BaseEffect: Scaled mesh dimensions: ${scaledMeshWidth} x ${scaledMeshHeight}`);
-            console.log(`BaseEffect: Mesh offset: (${meshOffsetX}, ${meshOffsetY})`);
+            log(`BaseEffect: Scaled mesh dimensions: ${scaledMeshWidth} x ${scaledMeshHeight}`);
+            log(`BaseEffect: Mesh offset: (${meshOffsetX}, ${meshOffsetY})`);
             
             // Convert UV to world coordinates
             // UV (0,0) = bottom-left of image, UV (1,1) = top-right of image
@@ -178,7 +184,7 @@ class BaseEffect {
             const worldY = imageY + meshOffsetY;
             
             const worldPos = new THREE.Vector3(worldX, worldY, zDepth);
-            console.log(`BaseEffect: UV (${u}, ${v}) -> World (${worldX}, ${worldY}, ${zDepth})`);
+            log(`BaseEffect: UV (${u}, ${v}) -> World (${worldX}, ${worldY}, ${zDepth})`);
             
             return worldPos;
             
@@ -190,7 +196,7 @@ class BaseEffect {
     
     // Helper method to create sprite meshes for particles
     createSpriteMesh(texture, position = {x: 0, y: 0, z: 0}, scale = 1) {
-        console.log(`BaseEffect: Creating sprite mesh at position (${position.x}, ${position.y}, ${position.z})`);
+        log(`BaseEffect: Creating sprite mesh at position (${position.x}, ${position.y}, ${position.z})`);
         
         const spriteMaterial = new THREE.SpriteMaterial({
             map: texture,
@@ -209,7 +215,7 @@ class BaseEffect {
         
         this.scene.add(sprite);
         
-        console.log(`BaseEffect: Sprite mesh created and added to scene`);
+        log(`BaseEffect: Sprite mesh created and added to scene`);
         return sprite;
     }
 }

@@ -197,14 +197,14 @@
         },
         {
           "name": "10",
-          "position": { "x": 0.65, "y": 0.76, "z": 0.3},
+          "position": { "x": 0.618, "y": 0.715, "z": 0.5},
           "scale": 1.0,
           "opacity": 0.5,
           "growthSpeed": 1.5,
           "count": 4,
           "lifetime": 2.5,
           "newParticleSpeed": 1.2,
-          "movementFactor": 0.8,
+          "movementFactor": 0.6,
           "blendMode": "AdditiveBlending",
           "useGSAP": true,
           "enableRotation": false

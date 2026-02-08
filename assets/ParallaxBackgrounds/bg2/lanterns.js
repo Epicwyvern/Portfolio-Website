@@ -4,18 +4,24 @@
 import BaseEffect from '../../../js/base-effect.js';
 import * as THREE from 'https://unpkg.com/three@0.172.0/build/three.module.js';
 
+const log = (...args) => {
+    if (window.location.pathname.endsWith('test-effects.html')) {
+        console.log(...args);
+    }
+};
+
 // Try to import GSAP, fall back to manual animations if not available
 let gsap = null;
 try {
     gsap = await import('../../../node_modules/gsap/index.js').then(module => module.gsap);
-    console.log('LanternEffect: GSAP loaded successfully');
+    log('LanternEffect: GSAP loaded successfully');
 } catch (error) {
-    console.log('LanternEffect: GSAP not available, using manual animations');
+    log('LanternEffect: GSAP not available, using manual animations');
 }
 
 class LanternEffect extends BaseEffect {
     async init() {
-        console.log('LanternEffect: Initializing twinkling lantern effect');
+        log('LanternEffect: Initializing twinkling lantern effect');
         
         try {
             // IMPORTANT: Get cached canonical mesh transform for performance
@@ -24,23 +30,23 @@ class LanternEffect extends BaseEffect {
             // Fallback: calculate if not cached yet
             if (!this.initialMeshTransform) {
                 this.initialMeshTransform = this.calculateCanonicalMeshTransform();
-                console.log('LanternEffect: Fallback - calculated canonical mesh transform:', this.initialMeshTransform);
+                log('LanternEffect: Fallback - calculated canonical mesh transform:', this.initialMeshTransform);
             } else {
-                console.log('LanternEffect: Using cached canonical mesh transform:', this.initialMeshTransform);
+                log('LanternEffect: Using cached canonical mesh transform:', this.initialMeshTransform);
             }
             
             // Load the flare texture for lanterns
             const flareTexture = await this.loadTexture('./assets/ParallaxBackgrounds/bg2/assets/flare_1.png');
-            console.log('LanternEffect: Successfully loaded flare texture');
+            log('LanternEffect: Successfully loaded flare texture');
             
             // Store texture for creating particles
             this.flareTexture = flareTexture;
             
             // Load lantern configuration from parallax config
             const lanternConfig = await this.loadLanternConfig();
-            console.log('LanternEffect: Loaded lantern configuration:', lanternConfig);
+            log('LanternEffect: Loaded lantern configuration:', lanternConfig);
             
-            console.log(`LanternEffect: Creating ${lanternConfig.lanterns.length} lantern systems`);
+            log(`LanternEffect: Creating ${lanternConfig.lanterns.length} lantern systems`);
             
             // Pre-calculate shared transformation values for performance
             const currentTransform = this.parallax.meshTransform;
@@ -71,7 +77,7 @@ class LanternEffect extends BaseEffect {
                     const worldPos = new THREE.Vector3(worldX, worldY, configPos.z);
                     
                     // Reduced logging for performance
-                    if (index === 0) console.log(`LanternEffect: Sample lantern system transform - config:`, configPos, '-> world:', worldPos);
+                    if (index === 0) log(`LanternEffect: Sample lantern system transform - config:`, configPos, '-> world:', worldPos);
                     
                     // Create lantern system
                     const lanternSystem = {
@@ -86,7 +92,7 @@ class LanternEffect extends BaseEffect {
                     };
                     
                     this.lanternSystems.push(lanternSystem);
-                    console.log(`LanternEffect: Created lantern system ${index} (${config.name}) at world position:`, worldPos);
+                    log(`LanternEffect: Created lantern system ${index} (${config.name}) at world position:`, worldPos);
                     
                 } catch (error) {
                     console.error(`LanternEffect: Error creating lantern system ${index}:`, error);
@@ -97,7 +103,7 @@ class LanternEffect extends BaseEffect {
             this.time = 0;
             this.isInitialized = true;
             
-            console.log(`LanternEffect: Successfully initialized with ${this.lanternSystems.length} lantern systems`);
+            log(`LanternEffect: Successfully initialized with ${this.lanternSystems.length} lantern systems`);
             
         } catch (error) {
             console.error('LanternEffect: Error during initialization:', error);
@@ -113,7 +119,7 @@ class LanternEffect extends BaseEffect {
         // Initialize time if undefined
         if (this.time === undefined) {
             this.time = 0;
-            console.log('LanternEffect: Initialized time in update method');
+            log('LanternEffect: Initialized time in update method');
         }
         
         // Update animation time
@@ -335,7 +341,7 @@ class LanternEffect extends BaseEffect {
                 
                 // Debug logging for movement (only occasionally to avoid spam)
                 if (Math.random() < 0.001) { // Log 0.1% of the time
-                    console.log(`Movement debug - Factor: ${system.movementFactor}, TargetX: ${this.parallax.targetX.toFixed(3)}, OffsetX: ${parallaxOffsetX.toFixed(3)}`);
+                    log(`Movement debug - Factor: ${system.movementFactor}, TargetX: ${this.parallax.targetX.toFixed(3)}, OffsetX: ${parallaxOffsetX.toFixed(3)}`);
                 }
             }
             
@@ -393,11 +399,11 @@ class LanternEffect extends BaseEffect {
     // Update lantern positions when mesh transform changes (e.g., on window resize)
     updatePositionsForMeshTransform(meshTransform) {
         if (!this.isInitialized || !this.lanternSystems || this.lanternSystems.length === 0) {
-            console.log('LanternEffect: Not ready for position updates');
+            log('LanternEffect: Not ready for position updates');
             return;
         }
         
-        console.log('LanternEffect: Updating positions for mesh transform:', meshTransform);
+        log('LanternEffect: Updating positions for mesh transform:', meshTransform);
         
         // Get the initial mesh configuration for relative positioning
         if (!this.initialMeshTransform) {
@@ -435,10 +441,10 @@ class LanternEffect extends BaseEffect {
             system.originPosition.set(finalX, finalY, finalZ);
             
             // Reduced logging for performance
-            if (index === 0) console.log(`LanternEffect: Sample position update - relative: (${relativeX.toFixed(3)}, ${relativeY.toFixed(3)}) -> final: (${finalX.toFixed(3)}, ${finalY.toFixed(3)}, ${finalZ.toFixed(3)})`);
+            if (index === 0) log(`LanternEffect: Sample position update - relative: (${relativeX.toFixed(3)}, ${relativeY.toFixed(3)}) -> final: (${finalX.toFixed(3)}, ${finalY.toFixed(3)}, ${finalZ.toFixed(3)})`);
         });
         
-        console.log('LanternEffect: Position update complete for all lantern systems');
+        log('LanternEffect: Position update complete for all lantern systems');
     }
     
     // Calculate what the mesh transform would be at a canonical/reference viewport size
@@ -448,7 +454,7 @@ class LanternEffect extends BaseEffect {
         const REFERENCE_WIDTH = referenceViewport.width;
         const REFERENCE_HEIGHT = referenceViewport.height;
         
-        console.log(`LanternEffect: Calculating canonical transform for reference viewport: ${REFERENCE_WIDTH}x${REFERENCE_HEIGHT}`);
+        log(`LanternEffect: Calculating canonical transform for reference viewport: ${REFERENCE_WIDTH}x${REFERENCE_HEIGHT}`);
         
         // Replicate the same mesh transform calculation from parallax.js but for reference viewport
         const containerAspect = REFERENCE_WIDTH / REFERENCE_HEIGHT;
@@ -486,13 +492,13 @@ class LanternEffect extends BaseEffect {
             }
         };
         
-        console.log('LanternEffect: Canonical transform calculated:', canonicalTransform);
+        log('LanternEffect: Canonical transform calculated:', canonicalTransform);
         return canonicalTransform;
     }
     
     // Load lantern configuration from the parallax config JSON
     async loadLanternConfig() {
-        console.log('LanternEffect: Loading lantern configuration from parallax config');
+        log('LanternEffect: Loading lantern configuration from parallax config');
         
         try {
             // Access the parallax config (which should already be loaded)
@@ -514,7 +520,7 @@ class LanternEffect extends BaseEffect {
                 }
             });
             
-            console.log('LanternEffect: Successfully loaded lantern config from JSON');
+            log('LanternEffect: Successfully loaded lantern config from JSON');
             return lanternConfig;
             
         } catch (error) {
@@ -525,7 +531,7 @@ class LanternEffect extends BaseEffect {
     
     // Fallback configuration if JSON config fails
     getFallbackConfig() {
-        console.log('LanternEffect: Using fallback lantern configuration');
+        log('LanternEffect: Using fallback lantern configuration');
         
         return {
             defaults: {
