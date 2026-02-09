@@ -5,10 +5,12 @@
     "focus": 0.5,
     "baseMouseSensitivity": 0.3,
     "devicePixelRatio": {
-      "mode": "autoScale",
+      "mode": "autoScaleWidth",
       "min": 1.0,
       "max": 2.0,
-      "exponent": 0.4   
+      "rampPercentLow": 0.1,
+      "rampPercentHigh": 0.2,
+      "easing": "smoothstep"
     },
     "expandDepthmapRadius": 1,
     "depthmapSize": 5000,

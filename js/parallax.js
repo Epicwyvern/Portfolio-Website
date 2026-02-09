@@ -162,7 +162,37 @@ class SimpleParallax {
                 max = configured.max;
             }
 
-            if (configured.mode === 'autoScale' || configured.autoScale === true) {
+            if (configured.mode === 'autoScaleWidth') {
+                const width = Math.max(1, window.innerWidth);
+                const widthRange = this.getWidthRange(configured);
+                const range = Math.max(1, widthRange.max - widthRange.min);
+                const rampPercentLow = typeof configured.rampPercentLow === 'number' && Number.isFinite(configured.rampPercentLow)
+                    ? Math.min(Math.max(configured.rampPercentLow, 0), 0.49)
+                    : (typeof configured.rampPercent === 'number' && Number.isFinite(configured.rampPercent)
+                        ? Math.min(Math.max(configured.rampPercent, 0), 0.49)
+                        : 0.2);
+                const rampPercentHigh = typeof configured.rampPercentHigh === 'number' && Number.isFinite(configured.rampPercentHigh)
+                    ? Math.min(Math.max(configured.rampPercentHigh, 0), 0.49)
+                    : (typeof configured.rampPercent === 'number' && Number.isFinite(configured.rampPercent)
+                        ? Math.min(Math.max(configured.rampPercent, 0), 0.49)
+                        : 0.2);
+                const rampLow = range * rampPercentLow;
+                const rampHigh = range * rampPercentHigh;
+                const lowMaxWidth = widthRange.min + rampLow;
+                const highMinWidth = widthRange.max - rampHigh;
+
+                let t;
+                if (width <= lowMaxWidth) {
+                    t = 1;
+                } else if (width >= highMinWidth) {
+                    t = 0;
+                } else {
+                    t = 1 - (width - lowMaxWidth) / Math.max(1, highMinWidth - lowMaxWidth);
+                }
+
+                t = this.applyDprEasing(t, configured);
+                target = min + (max - min) * t;
+            } else if (configured.mode === 'autoScale' || configured.autoScale === true) {
                 const viewportPixels = Math.max(1, window.innerWidth * window.innerHeight);
                 const referencePixels = this.getReferencePixels(configured);
                 const exponent = typeof configured.exponent === 'number' && Number.isFinite(configured.exponent)
@@ -170,7 +200,7 @@ class SimpleParallax {
                     : 0.5;
                 const base = typeof configured.base === 'number' && Number.isFinite(configured.base)
                     ? configured.base
-                    : nativeDpr;
+                    : 1;
                 const scale = Math.pow(referencePixels / viewportPixels, exponent);
                 target = base * scale;
             } else {
@@ -199,6 +229,17 @@ class SimpleParallax {
         return Number.isFinite(target) ? target : 1;
     }
 
+    applyDprEasing(t, configured) {
+        const easing = configured?.easing;
+        if (easing === 'smoothstep') {
+            return t * t * (3 - 2 * t);
+        }
+        if (easing === 'smootherstep') {
+            return t * t * t * (t * (t * 6 - 15) + 10);
+        }
+        return t;
+    }
+
     getReferencePixels(configured) {
         if (typeof configured?.referencePixels === 'number' && Number.isFinite(configured.referencePixels)) {
             return configured.referencePixels;
@@ -213,6 +254,25 @@ class SimpleParallax {
         }
 
         return 1920 * 1080;
+    }
+
+    getWidthRange(configured) {
+        const range = configured?.widthRange;
+        if (range && typeof range.min === 'number' && typeof range.max === 'number') {
+            return {
+                min: Math.max(1, range.min),
+                max: Math.max(range.min + 1, range.max)
+            };
+        }
+
+        const ref = this.config?.settings?.referenceViewport;
+        if (ref && typeof ref.width === 'number') {
+            const max = Math.max(1, ref.width);
+            const min = Math.max(1, Math.round(max * 0.2));
+            return { min, max };
+        }
+
+        return { min: 360, max: 1920 };
     }
 
     extractImageName(imagePath) {
