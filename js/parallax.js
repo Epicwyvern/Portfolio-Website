@@ -64,6 +64,9 @@ class SimpleParallax {
         this.orientationBaseline = null;
         this.orientationBaselineSamples = [];
         this.orientationDataReceived = false;
+        this.orientationPromptEl = null;
+        this.orientationPromptShown = false;
+        this.orientationPromptDismissedKey = 'orientationPromptDismissed';
         
         // Device detection
         this.isTouchDevice = this.detectTouchDevice();
@@ -171,6 +174,105 @@ class SimpleParallax {
         return 'ontouchstart' in window || navigator.maxTouchPoints > 0;
     }
 
+    isIOSDevice() {
+        return /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+            (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    }
+
+    shouldShowOrientationPrompt() {
+        const needsPermission = typeof DeviceOrientationEvent !== 'undefined' &&
+            typeof DeviceOrientationEvent.requestPermission === 'function';
+        const dismissed = sessionStorage.getItem(this.orientationPromptDismissedKey) === 'true';
+        return this.isMobile && this.useOrientation && this.orientationEnabled &&
+            this.isIOSDevice() && needsPermission && !this.orientationPermissionGranted && !dismissed;
+    }
+
+    createOrientationPrompt() {
+        if (this.orientationPromptEl) return;
+
+        const overlay = document.createElement('div');
+        overlay.id = 'orientation-permission-prompt';
+        overlay.style.position = 'fixed';
+        overlay.style.left = '0';
+        overlay.style.top = '0';
+        overlay.style.width = '100%';
+        overlay.style.height = '100%';
+        overlay.style.display = 'flex';
+        overlay.style.alignItems = 'center';
+        overlay.style.justifyContent = 'center';
+        overlay.style.background = 'rgba(0, 0, 0, 0.55)';
+        overlay.style.zIndex = '9999';
+
+        const panel = document.createElement('div');
+        panel.style.maxWidth = '320px';
+        panel.style.padding = '16px 18px';
+        panel.style.borderRadius = '10px';
+        panel.style.background = 'rgba(20, 20, 20, 0.95)';
+        panel.style.color = '#fff';
+        panel.style.fontFamily = 'system-ui, -apple-system, Segoe UI, Roboto, sans-serif';
+        panel.style.fontSize = '14px';
+        panel.style.textAlign = 'center';
+        panel.style.boxShadow = '0 8px 24px rgba(0, 0, 0, 0.35)';
+
+        const title = document.createElement('div');
+        title.textContent = 'Enable Tilt Controls';
+        title.style.fontSize = '16px';
+        title.style.fontWeight = '600';
+        title.style.marginBottom = '8px';
+
+        const body = document.createElement('div');
+        body.textContent = 'Tap to allow device motion so the background can tilt.';
+        body.style.marginBottom = '12px';
+
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.textContent = 'Enable Tilt';
+        button.style.border = '0';
+        button.style.padding = '8px 14px';
+        button.style.borderRadius = '6px';
+        button.style.background = '#ffb347';
+        button.style.color = '#111';
+        button.style.fontWeight = '600';
+        button.style.cursor = 'pointer';
+
+        button.addEventListener('click', async () => {
+            if (this.orientationPermissionRequested) return;
+            this.orientationPermissionRequested = true;
+            sessionStorage.setItem(this.orientationPromptDismissedKey, 'true');
+            await this.requestOrientationPermission();
+            this.hideOrientationPrompt();
+        });
+
+        panel.appendChild(title);
+        panel.appendChild(body);
+        panel.appendChild(button);
+        overlay.appendChild(panel);
+        document.body.appendChild(overlay);
+        this.orientationPromptEl = overlay;
+    }
+
+    showOrientationPrompt() {
+        if (this.orientationPromptShown) return;
+        this.createOrientationPrompt();
+        this.orientationPromptShown = true;
+    }
+
+    hideOrientationPrompt() {
+        if (this.orientationPromptEl) {
+            this.orientationPromptEl.remove();
+            this.orientationPromptEl = null;
+        }
+        this.orientationPromptShown = false;
+    }
+
+    maybeShowOrientationPrompt() {
+        if (this.shouldShowOrientationPrompt()) {
+            this.showOrientationPrompt();
+        } else if (this.orientationPromptShown) {
+            this.hideOrientationPrompt();
+        }
+    }
+
     updateInputModeFromViewport() {
         const wasMobile = this.isMobile;
         this.isTouchDevice = this.detectTouchDevice();
@@ -193,6 +295,7 @@ class SimpleParallax {
             if (!needsPermission && !this.orientationPermissionGranted) {
                 this.requestOrientationPermission();
             }
+            this.maybeShowOrientationPrompt();
         }
     }
 
@@ -206,13 +309,16 @@ class SimpleParallax {
                 if (this.orientationPermissionGranted) {
                     console.log('Device orientation permission granted');
                     this.setupOrientationListeners();
+                    this.hideOrientationPrompt();
                 } else {
                     console.log('Device orientation permission denied');
                     this.handleOrientationFallback();
+                    this.hideOrientationPrompt();
                 }
             } catch (error) {
                 console.log('Error requesting orientation permission:', error);
                 this.handleOrientationFallback();
+                this.hideOrientationPrompt();
             }
         } else if (typeof DeviceOrientationEvent !== 'undefined') {
             // Older browsers or Android - no permission needed

@@ -6,6 +6,12 @@
     box-sizing: border-box;
 }
 
+html,
+body {
+    width: 100%;
+    height: 100%;
+}
+
 body {
     overflow: hidden;
     background: #000;
@@ -15,8 +21,11 @@ body {
 #parallax-container {
     width: 100vw;
     height: 100vh;
+    height: 100svh;
+    height: 100dvh;
     position: relative;
     overflow: hidden;
+    padding-bottom: env(safe-area-inset-bottom);
 }
 
 #parallax-canvas {
