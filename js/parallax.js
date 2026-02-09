@@ -96,6 +96,9 @@ class SimpleParallax {
         
         // Cache canonical transform to avoid recalculation
         this.cachedCanonicalTransform = null;
+
+        // Frame timing for time-based effects
+        this.lastFrameTime = performance.now();
         
         this.init();
     }
@@ -1010,6 +1013,13 @@ class SimpleParallax {
     animate() {
         requestAnimationFrame(() => this.animate());
 
+        const now = performance.now();
+        let deltaTime = (now - this.lastFrameTime) / 1000;
+        this.lastFrameTime = now;
+        if (deltaTime > 0.1) {
+            deltaTime = 0.1;
+        }
+
         // Update auto-movement
         this.updateAutoMovement();
 
@@ -1042,7 +1052,7 @@ class SimpleParallax {
 
         // Update effects
         if (this.effectManager && this.effectManager.isReady()) {
-            this.effectManager.update();
+            this.effectManager.update(deltaTime);
         }
 
         this.renderer.render(this.scene, this.camera);

@@ -84,7 +84,7 @@ class EffectManager {
         return effects;
     }
     
-    update() {
+    update(deltaTime) {
         if (!this.isInitialized) {
             return;
         }
@@ -93,7 +93,7 @@ class EffectManager {
         this.effectInstances.forEach((effect, index) => {
             try {
                 if (effect.update && typeof effect.update === 'function') {
-                    effect.update();
+                    effect.update(deltaTime);
                 }
             } catch (error) {
                 console.error(`EffectManager: Error updating effect ${index}:`, error);

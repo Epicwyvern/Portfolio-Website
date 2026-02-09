@@ -190,7 +190,7 @@
         },
         {
           "name": "9",
-          "position": { "x": 0.434, "y": 0.43, "z": 0.44},
+          "position": { "x": 0.438, "y": 0.43, "z": 0.44},
           "scale": 1.0,
           "opacity": 0.5,
           "growthSpeed": 1.5,

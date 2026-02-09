@@ -111,7 +111,7 @@ class LanternEffect extends BaseEffect {
         }
     }
     
-    update() {
+    update(deltaTime) {
         if (!this.isInitialized) {
             return;
         }
@@ -123,8 +123,8 @@ class LanternEffect extends BaseEffect {
         }
         
         // Update animation time
-        const deltaTime = 0.016; // Assuming ~60fps
-        this.time += deltaTime;
+        const frameDelta = Number.isFinite(deltaTime) && deltaTime > 0 ? deltaTime : 0.016;
+        this.time += frameDelta;
         
         // Update each lantern system
         this.lanternSystems.forEach((system, systemIndex) => {
@@ -144,7 +144,7 @@ class LanternEffect extends BaseEffect {
                     const particle = system.particles[i];
                     
                     // Update particle age
-                    particle.age += deltaTime;
+                    particle.age += frameDelta;
                     
                     // Check if particle has exceeded its lifetime
                     if (particle.age >= particle.lifetime) {
@@ -209,7 +209,9 @@ class LanternEffect extends BaseEffect {
                 color: system.config.color || 0xffaa44,
                 initialRotation: randomRotation,
                 gsapAnimation: null, // Store GSAP animation reference
-                useGSAP: gsap !== null && (system.config.useGSAP !== false) // Allow disabling GSAP per system
+                useGSAP: gsap !== null && (system.config.useGSAP !== false), // Allow disabling GSAP per system
+                colorObj: new THREE.Color(system.config.color || 0xffaa44),
+                glowColor: new THREE.Color(system.config.color || 0xffaa44)
             };
             
             // Store reference to system for parallax movement
@@ -317,15 +319,14 @@ class LanternEffect extends BaseEffect {
             
             // Color tinting for glow effect (only for manual animation to avoid conflicts with GSAP)
             if (!(particle.useGSAP && particle.gsapAnimation)) {
-                const baseColor = new THREE.Color(particle.color);
                 const currentOpacity = mesh.material.opacity;
                 const normalizedOpacity = currentOpacity / particle.maxOpacity;
                 const glowIntensity = 0.5 + normalizedOpacity * 0.5;
-                baseColor.multiplyScalar(glowIntensity);
-                mesh.material.color = baseColor;
+                particle.glowColor.copy(particle.colorObj).multiplyScalar(glowIntensity);
+                mesh.material.color.copy(particle.glowColor);
             } else {
                 // For GSAP, use simple color without opacity-based intensity changes
-                mesh.material.color = new THREE.Color(particle.color);
+                mesh.material.color.copy(particle.colorObj);
             }
             
             // Apply parallax movement - sync with main mesh movement
