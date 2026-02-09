@@ -107,7 +107,7 @@ class SimpleParallax {
         this.depthMapPath = `./assets/ParallaxBackgrounds/${this.backgroundName}/${this.config.depthMap}`;
         this.focus = s.focus;
         this.baseMouseSensitivity = s.baseMouseSensitivity;
-        this.devicePixelRatio = s.devicePixelRatio || Math.min(window.devicePixelRatio, 2) || 1;
+        this.devicePixelRatio = this.resolveDevicePixelRatio();
         this.expandDepthmapRadius = s.expandDepthmapRadius;
         this.depthmapSize = s.depthmapSize;
         this.meshDepth = s.meshDepth;
@@ -132,6 +132,87 @@ class SimpleParallax {
         this.orientationMaxAngle = s.orientationMaxAngle !== undefined ? s.orientationMaxAngle : 30;
         this.orientationEnabled = s.orientationEnabled !== false;
         this.orientationFallbackToTouch = s.orientationFallbackToTouch !== false;
+    }
+
+    getDeviceBucket() {
+        const width = window.innerWidth;
+        if (width < 768) return 'mobile';
+        if (width < 1024) return 'tablet';
+        return 'desktop';
+    }
+
+    resolveDevicePixelRatio() {
+        const settings = this.config?.settings || {};
+        const configured = settings.devicePixelRatio;
+        const nativeDpr = window.devicePixelRatio || 1;
+
+        if (typeof configured === 'number' && Number.isFinite(configured)) {
+            return configured;
+        }
+
+        let target = nativeDpr;
+        let min = null;
+        let max = null;
+
+        if (configured && typeof configured === 'object') {
+            if (typeof configured.min === 'number' && Number.isFinite(configured.min)) {
+                min = configured.min;
+            }
+            if (typeof configured.max === 'number' && Number.isFinite(configured.max)) {
+                max = configured.max;
+            }
+
+            if (configured.mode === 'autoScale' || configured.autoScale === true) {
+                const viewportPixels = Math.max(1, window.innerWidth * window.innerHeight);
+                const referencePixels = this.getReferencePixels(configured);
+                const exponent = typeof configured.exponent === 'number' && Number.isFinite(configured.exponent)
+                    ? configured.exponent
+                    : 0.5;
+                const base = typeof configured.base === 'number' && Number.isFinite(configured.base)
+                    ? configured.base
+                    : nativeDpr;
+                const scale = Math.pow(referencePixels / viewportPixels, exponent);
+                target = base * scale;
+            } else {
+                const bucket = this.getDeviceBucket();
+                if (typeof configured[bucket] === 'number' && Number.isFinite(configured[bucket])) {
+                    target = configured[bucket];
+                } else if (typeof configured.value === 'number' && Number.isFinite(configured.value)) {
+                    target = configured.value;
+                } else if (configured.auto === true) {
+                    target = nativeDpr;
+                }
+            }
+        } else {
+            // Default behavior: clamp high-DPI to protect performance
+            min = 1;
+            max = 2;
+        }
+
+        if (typeof min === 'number') {
+            target = Math.max(target, min);
+        }
+        if (typeof max === 'number') {
+            target = Math.min(target, max);
+        }
+
+        return Number.isFinite(target) ? target : 1;
+    }
+
+    getReferencePixels(configured) {
+        if (typeof configured?.referencePixels === 'number' && Number.isFinite(configured.referencePixels)) {
+            return configured.referencePixels;
+        }
+
+        const ref = configured?.referenceResolution || this.config?.settings?.referenceViewport;
+        if (ref && typeof ref.width === 'number' && typeof ref.height === 'number') {
+            const pixels = ref.width * ref.height;
+            if (Number.isFinite(pixels) && pixels > 0) {
+                return pixels;
+            }
+        }
+
+        return 1920 * 1080;
     }
 
     extractImageName(imagePath) {
@@ -793,6 +874,11 @@ class SimpleParallax {
         // Window resize
         window.addEventListener('resize', () => {
             this.updateInputModeFromViewport();
+            const nextPixelRatio = this.resolveDevicePixelRatio();
+            if (this.devicePixelRatio !== nextPixelRatio) {
+                this.devicePixelRatio = nextPixelRatio;
+                this.renderer.setPixelRatio(this.devicePixelRatio);
+            }
             this.camera.aspect = window.innerWidth / window.innerHeight;
             this.camera.updateProjectionMatrix();
             this.renderer.setSize(window.innerWidth, window.innerHeight);

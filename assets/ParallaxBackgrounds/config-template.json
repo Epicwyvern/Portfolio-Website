@@ -4,7 +4,14 @@
   "settings": {
     "focus": 0.25,
     "baseMouseSensitivity": 0.5,
-    "devicePixelRatio": 1.0,
+    "_comment_devicePixelRatio": "Use number, bucketed values, or autoScale mode.",
+    "devicePixelRatio": {
+      "mode": "autoScale",
+      "min": 1.0,
+      "max": 3.0,
+      "referenceResolution": { "width": 1920, "height": 1080 },
+      "exponent": 0.5
+    },
     "expandDepthmapRadius": 7,
     "depthmapSize": 1024,
     "meshDepth": 1.0,
