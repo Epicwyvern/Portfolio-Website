@@ -24,17 +24,6 @@ class LanternEffect extends BaseEffect {
         log('LanternEffect: Initializing twinkling lantern effect');
         
         try {
-            // IMPORTANT: Get cached canonical mesh transform for performance
-            this.initialMeshTransform = this.parallax.getCanonicalTransform();
-            
-            // Fallback: calculate if not cached yet
-            if (!this.initialMeshTransform) {
-                this.initialMeshTransform = this.calculateCanonicalMeshTransform();
-                log('LanternEffect: Fallback - calculated canonical mesh transform:', this.initialMeshTransform);
-            } else {
-                log('LanternEffect: Using cached canonical mesh transform:', this.initialMeshTransform);
-            }
-            
             // Load the flare texture for lanterns
             const flareTexture = await this.loadTexture('./assets/ParallaxBackgrounds/bg2/assets/flare_1.png');
             log('LanternEffect: Successfully loaded flare texture');
@@ -48,10 +37,9 @@ class LanternEffect extends BaseEffect {
             
             log(`LanternEffect: Creating ${lanternConfig.lanterns.length} lantern systems`);
             
-            // Pre-calculate shared transformation values for performance
+            // Config position is image UV (0-1). World position = (u - 0.5) * meshSize + mesh.position,
+            // so effects move with the mesh when focal point or viewport changes (no extra offset).
             const currentTransform = this.parallax.meshTransform;
-            const refMeshWidth = this.initialMeshTransform.baseGeometrySize.width * this.initialMeshTransform.scale;
-            const refMeshHeight = this.initialMeshTransform.baseGeometrySize.height * this.initialMeshTransform.scale;
             const currentMeshWidth = currentTransform.baseGeometrySize.width * currentTransform.scale;
             const currentMeshHeight = currentTransform.baseGeometrySize.height * currentTransform.scale;
             
@@ -62,18 +50,15 @@ class LanternEffect extends BaseEffect {
                     // Merge with defaults
                     const config = { ...lanternConfig.defaults, ...lanternData };
                     
-                    // Config coordinates are in reference viewport space - transform to current viewport
+                    // Config coordinates are image UV (0-1); same space as focal point
                     const configPos = new THREE.Vector3(
-                        config.position.x || 0,
-                        config.position.y || 0,
-                        config.position.z || 0.5
+                        config.position.x ?? 0.5,
+                        config.position.y ?? 0.5,
+                        config.position.z ?? 0.5
                     );
                     
-                    // Optimized coordinate transformation using pre-calculated values
-                    const relativeX = (configPos.x - this.initialMeshTransform.position.x) / refMeshWidth + 0.5;
-                    const relativeY = (configPos.y - this.initialMeshTransform.position.y) / refMeshHeight + 0.5;
-                    const worldX = (relativeX - 0.5) * currentMeshWidth + currentTransform.position.x;
-                    const worldY = (relativeY - 0.5) * currentMeshHeight + currentTransform.position.y;
+                    const worldX = (configPos.x - 0.5) * currentMeshWidth + currentTransform.position.x;
+                    const worldY = (configPos.y - 0.5) * currentMeshHeight + currentTransform.position.y;
                     const worldPos = new THREE.Vector3(worldX, worldY, configPos.z);
                     
                     // Reduced logging for performance
@@ -83,8 +68,8 @@ class LanternEffect extends BaseEffect {
                     const lanternSystem = {
                         name: config.name,
                         index: index,
-                        originPosition: worldPos.clone(), // Current working position (changes with mesh scaling)
-                        basePosition: configPos.clone(),    // True original position in reference viewport space (never changes)
+                        originPosition: worldPos.clone(), // Current working position (changes with mesh/focal)
+                        basePosition: configPos.clone(),    // Image UV (0-1); used to recompute world when mesh transform changes
                         config: config,
                         particles: [], // Array of active particles
                         nextParticleTime: 0, // When to spawn next particle
@@ -397,7 +382,7 @@ class LanternEffect extends BaseEffect {
         return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2);
     }
     
-    // Update lantern positions when mesh transform changes (e.g., on window resize)
+    // Update lantern positions when mesh transform changes (e.g., window resize or focal point)
     updatePositionsForMeshTransform(meshTransform) {
         if (!this.isInitialized || !this.lanternSystems || this.lanternSystems.length === 0) {
             log('LanternEffect: Not ready for position updates');
@@ -406,11 +391,8 @@ class LanternEffect extends BaseEffect {
         
         log('LanternEffect: Updating positions for mesh transform:', meshTransform);
         
-        // Get the initial mesh configuration for relative positioning
-        if (!this.initialMeshTransform) {
-            console.warn('LanternEffect: No initial mesh transform stored, cannot update positions');
-            return;
-        }
+        const currentMeshWidth = meshTransform.baseGeometrySize.width * meshTransform.scale;
+        const currentMeshHeight = meshTransform.baseGeometrySize.height * meshTransform.scale;
         
         this.lanternSystems.forEach((system, index) => {
             if (!system || !system.basePosition) {
@@ -418,31 +400,15 @@ class LanternEffect extends BaseEffect {
                 return;
             }
             
-            const basePos = system.basePosition; // Original position in reference viewport space
+            // basePosition is image UV (0-1); same formula as mesh so effects move with focal point
+            const basePos = system.basePosition;
+            const finalX = (basePos.x - 0.5) * currentMeshWidth + meshTransform.position.x;
+            const finalY = (basePos.y - 0.5) * currentMeshHeight + meshTransform.position.y;
+            const finalZ = basePos.z;
             
-            // CORRECTED APPROACH: Transform from reference viewport to current viewport
-            // Use the same transformation logic as initial creation
-            
-            // 1. Convert reference position to relative coordinates within reference mesh
-            const refMeshWidth = this.initialMeshTransform.baseGeometrySize.width * this.initialMeshTransform.scale;
-            const refMeshHeight = this.initialMeshTransform.baseGeometrySize.height * this.initialMeshTransform.scale;
-            
-            const relativeX = (basePos.x - this.initialMeshTransform.position.x) / refMeshWidth + 0.5;
-            const relativeY = (basePos.y - this.initialMeshTransform.position.y) / refMeshHeight + 0.5;
-            
-            // 2. Apply relative position to current mesh dimensions
-            const currentMeshWidth = meshTransform.baseGeometrySize.width * meshTransform.scale;
-            const currentMeshHeight = meshTransform.baseGeometrySize.height * meshTransform.scale;
-            
-            const finalX = (relativeX - 0.5) * currentMeshWidth + meshTransform.position.x;
-            const finalY = (relativeY - 0.5) * currentMeshHeight + meshTransform.position.y;
-            const finalZ = basePos.z; // Z position stays the same
-            
-            // Update the system's origin position to reflect the new working position
             system.originPosition.set(finalX, finalY, finalZ);
             
-            // Reduced logging for performance
-            if (index === 0) log(`LanternEffect: Sample position update - relative: (${relativeX.toFixed(3)}, ${relativeY.toFixed(3)}) -> final: (${finalX.toFixed(3)}, ${finalY.toFixed(3)}, ${finalZ.toFixed(3)})`);
+            if (index === 0) log(`LanternEffect: Sample position update - UV: (${basePos.x.toFixed(3)}, ${basePos.y.toFixed(3)}) -> final: (${finalX.toFixed(3)}, ${finalY.toFixed(3)}, ${finalZ.toFixed(3)})`);
         });
         
         log('LanternEffect: Position update complete for all lantern systems');

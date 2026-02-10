@@ -64,7 +64,7 @@
       "lanterns": [
         {
           "name": "0",
-          "position": { "x": 0.022, "y": 0.281, "z": 0.5},
+          "position": { "x": 0.503, "y": 0.562, "z": 0.445},
           "scale": 1.0,
           "opacity": 0.5,
           "growthSpeed": 1.5,
@@ -78,7 +78,7 @@
         },
         {
           "name": "1",
-          "position": { "x": 0.28, "y": 0.29, "z": 0.5},
+          "position": { "x": 0.544, "y": 0.565, "z": 0.445},
           "scale": 1.0,
           "opacity": 0.5,
           "growthSpeed": 1.5,
@@ -92,7 +92,7 @@
         },
         {
           "name": "2",
-          "position": { "x": 0.553, "y": 0.33, "z": 0.45},
+          "position": { "x": 0.545, "y": 0.528, "z": 0.45},
           "scale": 1.0,
           "opacity": 0.5,
           "growthSpeed": 1.5,
@@ -106,7 +106,7 @@
         },
         {
           "name": "3",
-          "position": { "x": 0.296, "y": 0.164, "z": 0.45},
+          "position": { "x": 0.586, "y": 0.575, "z": 0.445},
           "scale": 1.0,
           "opacity": 0.4,
           "growthSpeed": 1.5,
@@ -120,7 +120,7 @@
         },
         {
           "name": "4",
-          "position": { "x": 0.090, "y": 0.420, "z": 0.44},
+          "position": { "x": 0.515, "y": 0.598, "z": 0.442},
           "scale": 1.0,
           "opacity": 0.5,
           "growthSpeed": 1.5,
@@ -134,7 +134,7 @@
         }, 
         {
           "name": "5",
-          "position": { "x": -0.075, "y": 0.520, "z": 0.44},
+          "position": { "x": 0.529, "y": 0.612, "z": 0.44},
           "scale": 1.0,
           "opacity": 0.5,
           "growthSpeed": 1.5,
@@ -148,7 +148,7 @@
         },
         {
           "name": "6",
-          "position": { "x": 0.185, "y": 0.47, "z": 0.44},
+          "position": { "x": 0.568, "y": 0.601, "z": 0.44},
           "scale": 1.0,
           "opacity": 0.5,
           "growthSpeed": 1.5,
@@ -162,7 +162,7 @@
         },
         {
           "name": "7",
-          "position": { "x": -0.01, "y": 0.68, "z": 0.44},
+          "position": { "x": 0.489, "y": 0.627, "z": 0.44},
           "scale": 1.0,
           "opacity": 0.5,
           "growthSpeed": 1.5,
@@ -176,7 +176,7 @@
         },
         {
           "name": "8",
-          "position": { "x": 0.161, "y": 0.78, "z": 0.44},
+          "position": { "x": 0.499, "y": 0.669, "z": 0.44},
           "scale": 1.0,
           "opacity": 0.5,
           "growthSpeed": 1.5,
@@ -190,7 +190,7 @@
         },
         {
           "name": "9",
-          "position": { "x": 0.438, "y": 0.43, "z": 0.44},
+          "position": { "x": 0.525, "y": 0.697, "z": 0.41},
           "scale": 1.0,
           "opacity": 0.5,
           "growthSpeed": 1.5,
@@ -204,7 +204,21 @@
         },
         {
           "name": "10",
-          "position": { "x": 0.618, "y": 0.715, "z": 0.5},
+          "position": { "x": 0.5985, "y": 0.686, "z": 0.4},
+          "scale": 1.0,
+          "opacity": 0.5,
+          "growthSpeed": 1.5,
+          "count": 4,
+          "lifetime": 2.5,
+          "newParticleSpeed": 1.2,
+          "movementFactor": 0.8,
+          "blendMode": "AdditiveBlending",
+          "useGSAP": true,
+          "enableRotation": false
+        },
+        {
+          "name": "11",
+          "position": { "x": 0.611, "y": 0.595, "z": 0.44},
           "scale": 1.0,
           "opacity": 0.5,
           "growthSpeed": 1.5,
@@ -220,5 +234,3 @@
     }
   }
 }
-
-
