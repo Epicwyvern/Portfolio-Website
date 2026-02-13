@@ -1,6 +1,6 @@
 {
-  "image": "bg2.jpg",
-  "depthMap": "bg2d2.webp",
+  "image": "bg2X.png",
+  "depthMap": "bg2d4.webp",
   "settings": {
     "focus": 0.5,
     "baseMouseSensitivity": 0.3,
