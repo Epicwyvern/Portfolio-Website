@@ -718,42 +718,7 @@ class SimpleParallax {
         };
 
         const material = new THREE.ShaderMaterial({
-            vertexShader: `
-                uniform vec2 mouseDelta;
-                uniform float focus;
-                uniform float meshDepth;
-                uniform float sensitivity;
-                uniform float edgeWidth;
-                
-                attribute float depth;
-                
-                varying vec2 vUv;
-                
-                void main() {
-                    vUv = uv;
-                    vec3 pos = position;
-                    
-                    float actualDepth = depth * meshDepth;
-                    float focusDepth = focus * meshDepth;
-                    float cameraZ = 1.4;
-                
-                    // Rotational displacement (relative to focus depth)
-                    vec2 rotate = mouseDelta * sensitivity * 
-                        (1.0 - focus) * 
-                        (actualDepth - focusDepth) * 
-                        vec2(-1.0, 1.0);
-                
-                    // Calculate edge proximity factor (0 at edges, 1 in center)
-                    vec2 edgeFactorVec = smoothstep(0.0, edgeWidth, vUv) * 
-                                        smoothstep(1.0, 1.0 - edgeWidth, vUv);
-                    float edgeFactor = edgeFactorVec.x * edgeFactorVec.y;
-                
-                    // Apply displacement with edge preservation
-                    pos.xy += rotate * edgeFactor;
-                
-                    gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
-                }
-            `,
+            vertexShader: this.getDisplacementVertexShader(),
             fragmentShader: `
                 uniform sampler2D map;
                 varying vec2 vUv;
@@ -1083,7 +1048,94 @@ class SimpleParallax {
             });
         }
     }
-    
+
+    // --- Area Effects API (for overlay quads that sync with parallax mesh) ---
+
+    /**
+     * Returns a clone of the main mesh geometry, including the depth attribute.
+     * Used by area effects (e.g. water ripple) to create overlay meshes with identical vertex displacement.
+     * @returns {THREE.BufferGeometry|null} Cloned geometry, or null if mesh not ready
+     */
+    getEffectGeometryClone() {
+        if (!this.mesh || !this.mesh.geometry) return null;
+        return this.mesh.geometry.clone();
+    }
+
+    /**
+     * Returns a coarse geometry for area effect overlays, with fewer segments than the main mesh.
+     * Uses the same depth sampling and position modification as createGeometry, but with configurable segment count.
+     * Significantly reduces vertex count for performance (e.g. 256x256 vs millions).
+     * @param {number} [segmentsX=256] Segment count along X
+     * @param {number} [segmentsY=256] Segment count along Y
+     * @returns {THREE.BufferGeometry|null} Coarse geometry with depth attribute
+     */
+    getCoarseEffectGeometry(segmentsX = 256, segmentsY = 256) {
+        if (!this.depthData) return null;
+        const w = Math.max(2, Math.min(segmentsX, this.depthData.width));
+        const h = Math.max(2, Math.min(segmentsY, this.depthData.height));
+        return this.createGeometry(w, h, this.depthData);
+    }
+
+    /**
+     * Returns shared references to the displacement uniforms used by the main mesh vertex shader.
+     * Area effects must use these same objects so their overlay stays in sync with parallax movement.
+     * @returns {Object|null} Object with mouseDelta, focus, meshDepth, sensitivity, edgeWidth
+     */
+    getDisplacementUniforms() {
+        if (!this.uniforms) return null;
+        return {
+            mouseDelta: this.uniforms.mouseDelta,
+            focus: this.uniforms.focus,
+            meshDepth: this.uniforms.meshDepth,
+            sensitivity: this.uniforms.sensitivity,
+            edgeWidth: this.uniforms.edgeWidth
+        };
+    }
+
+    /**
+     * Returns the vertex shader source used for depth-based displacement.
+     * Area effects must use this exact shader (with shared uniforms) for perfect alignment.
+     * @returns {string} GLSL vertex shader source
+     */
+    getDisplacementVertexShader() {
+        return `
+            uniform vec2 mouseDelta;
+            uniform float focus;
+            uniform float meshDepth;
+            uniform float sensitivity;
+            uniform float edgeWidth;
+            
+            attribute float depth;
+            
+            varying vec2 vUv;
+            
+            void main() {
+                vUv = uv;
+                vec3 pos = position;
+                
+                float actualDepth = depth * meshDepth;
+                float focusDepth = focus * meshDepth;
+                float cameraZ = 1.4;
+            
+                // Rotational displacement (relative to focus depth)
+                vec2 rotate = mouseDelta * sensitivity * 
+                    (1.0 - focus) * 
+                    (actualDepth - focusDepth) * 
+                    vec2(-1.0, 1.0);
+            
+                // Calculate edge proximity factor (0 at edges, 1 in center)
+                vec2 edgeFactorVec = smoothstep(0.0, edgeWidth, vUv) * 
+                                    smoothstep(1.0, 1.0 - edgeWidth, vUv);
+                float edgeFactor = edgeFactorVec.x * edgeFactorVec.y;
+            
+                // Apply displacement with edge preservation
+                pos.xy += rotate * edgeFactor;
+            
+                gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
+            }
+        `;
+    }
+
     // Cache canonical transform for performance optimization
     cacheCanonicalTransform() {
         if (!this.config.settings.referenceViewport) {

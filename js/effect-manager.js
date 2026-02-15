@@ -71,7 +71,7 @@ class EffectManager {
         // In a real implementation, you might want to fetch a manifest or scan the directory
         const expectedEffects = {
             'bg1': ['snowmist.js'],
-            'bg2': ['lanterns.js'],
+            'bg2': ['lanterns.js', 'water-ripple.js'],
             'bg3': [],
             'bg4': [],
             'bg5': [],
