@@ -172,8 +172,16 @@ class WaterRippleEffect extends BaseEffect {
 
             this.textures.push(maskTexture, rippleTexture);
             
-            // Build mask sampler for "is over water" check (must be after texture load)
-            this.maskSampler = this.buildMaskSampler(maskTexture);
+            // Defer mask sampler so it doesn't block first paint (was causing long black screen)
+            this.maskSampler = null;
+            const scheduleMaskSampler = () => {
+                if (typeof requestIdleCallback !== 'undefined') {
+                    requestIdleCallback(() => { this.maskSampler = this.buildMaskSampler(maskTexture); }, { timeout: 500 });
+                } else {
+                    setTimeout(() => { this.maskSampler = this.buildMaskSampler(maskTexture); }, 0);
+                }
+            };
+            scheduleMaskSampler();
 
             const rippleScale = config.rippleScale ?? 3.0;
             const rippleSpeed = config.rippleSpeed ?? 0.05;

@@ -24,43 +24,51 @@ class EffectManager {
         console.log(`EffectManager: Loading effects for background ${this.backgroundName}`);
         
         try {
-            // Discover effect files in the background folder
             const effectFiles = await this.discoverEffectFiles();
             console.log(`EffectManager: Found ${effectFiles.length} effect files:`, effectFiles);
             
             if (effectFiles.length === 0) {
-                console.log('EffectManager: No effect files found, skipping effect loading');
+                this.isInitialized = true;
                 return;
             }
             
-            // Load each effect
-            for (const effectFile of effectFiles) {
-                try {
-                    console.log(`EffectManager: Loading effect file: ${effectFile}`);
-                    const effectPath = `../assets/ParallaxBackgrounds/${this.backgroundName}/${effectFile}`;
-                    const effectModule = await import(effectPath);
-                    
-                    if (effectModule.default) {
-                        const effectInstance = new effectModule.default(this.scene, this.camera, this.renderer, this.parallax);
-                        await effectInstance.init();
-                        
-                        this.effects.set(effectFile.replace('.js', ''), effectInstance);
-                        this.effectInstances.push(effectInstance);
-                        
-                        console.log(`EffectManager: Successfully loaded effect: ${effectFile}`);
-                    } else {
-                        console.warn(`EffectManager: Effect file ${effectFile} does not export a default class`);
-                    }
-                } catch (error) {
-                    console.error(`EffectManager: Failed to load effect ${effectFile}:`, error);
+            // Load all effects in parallel (faster than one-by-one)
+            const loadOne = async (effectFile) => {
+                const effectPath = `../assets/ParallaxBackgrounds/${this.backgroundName}/${effectFile}`;
+                const effectModule = await import(effectPath);
+                if (!effectModule.default) {
+                    console.warn(`EffectManager: Effect file ${effectFile} does not export a default class`);
+                    return null;
                 }
-            }
-            
+                const effectInstance = new effectModule.default(this.scene, this.camera, this.renderer, this.parallax);
+                await effectInstance.init();
+                return { key: effectFile.replace('.js', ''), instance: effectInstance };
+            };
+
+            const results = await Promise.all(
+                effectFiles.map((effectFile) => {
+                    console.log(`EffectManager: Loading effect file: ${effectFile}`);
+                    return loadOne(effectFile).catch((error) => {
+                        console.error(`EffectManager: Failed to load effect ${effectFile}:`, error);
+                        return null;
+                    });
+                })
+            );
+
+            results.forEach((r) => {
+                if (r) {
+                    this.effects.set(r.key, r.instance);
+                    this.effectInstances.push(r.instance);
+                    console.log(`EffectManager: Successfully loaded effect: ${r.key}`);
+                }
+            });
+
             this.isInitialized = true;
             console.log(`EffectManager: Successfully initialized with ${this.effectInstances.length} effects`);
             
         } catch (error) {
             console.error('EffectManager: Error during effect loading:', error);
+            this.isInitialized = true;
         }
     }
     
@@ -85,11 +93,7 @@ class EffectManager {
     }
     
     update(deltaTime) {
-        if (!this.isInitialized) {
-            return;
-        }
-        
-        // Update all active effects
+        // Update whatever effects are loaded (list may still be growing if loadEffects() is in progress)
         this.effectInstances.forEach((effect, index) => {
             try {
                 if (effect.update && typeof effect.update === 'function') {
