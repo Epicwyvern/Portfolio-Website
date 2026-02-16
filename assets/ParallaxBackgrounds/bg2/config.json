@@ -406,7 +406,15 @@
       "overlaySegments": 256,
       "rippleScale": 5.0,
       "rippleSpeed": 0.05,
-      "refractionStrength": 0.01
+      "refractionStrength": 0.01,
+      "mouseInteraction": {
+        "enabled": true,
+        "strength": 15,
+        "radius": 0.15,
+        "fadeInSpeed": 10,
+        "fadeOutSpeed": 10,
+        "maxLifetime": 120
+      }
     }
   }
 }
