@@ -400,12 +400,13 @@
       ]
     },
     "waterRipple": {
-      "maskPath": "assets/bg2WaterBW.webp",
+      "maskPath": "assets/bg2WaterMask.webp",
+      "maskPattern": "bg2WaterBW*.webp",
       "ripplePath": "assets/waterripplenormal.webp",
       "overlaySegments": 256,
-      "rippleScale": 3.0,
-      "rippleSpeed": 0.03,
-      "refractionStrength": 0.005
+      "rippleScale": 5.0,
+      "rippleSpeed": 0.05,
+      "refractionStrength": 0.01
     }
   }
 }
