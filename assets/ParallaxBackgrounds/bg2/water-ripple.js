@@ -19,11 +19,16 @@ const DEFAULT_FRAGMENT_SHADER = `
     uniform float rippleScale;
     uniform float rippleSpeed;
     uniform float refractionStrength;
-    
-    // Mouse interaction uniforms - instanced system (per-slot for WebGL compatibility)
-    uniform float mouseStrength;
-    uniform float mouseRadius;
+
+    // Wake interaction uniforms (per-slot for WebGL 1 compatibility)
     uniform float mouseEnabled;
+    uniform float wakeStrength;
+    uniform float wakeRadius;
+    uniform float wakeAngle;
+    uniform float wakeLength;
+    uniform float wakeFrequency;
+    uniform float wakeRippleSpeed;
+    uniform float wakeTint;
     uniform int mouseInstanceCount;
     uniform vec2 mouseInstancePos0;
     uniform vec2 mouseInstancePos1;
@@ -52,59 +57,117 @@ const DEFAULT_FRAGMENT_SHADER = `
 
     varying vec2 vUv;
 
-    vec2 addInstanceContribution(vec2 instancePos, vec2 instanceVel, float instanceAlpha) {
-        if (instanceAlpha <= 0.001 || instancePos.x < 0.0 || instancePos.x > 1.0 || instancePos.y < 0.0 || instancePos.y > 1.0) return vec2(0.0);
-        vec2 toInstance = vUv - instancePos;
-        float distToInstance = length(toInstance);
-        if (distToInstance >= mouseRadius || distToInstance < 0.001) return vec2(0.0);
-        float normalizedDist = distToInstance / mouseRadius;
-        float falloff = 1.0 - normalizedDist;
-        falloff = falloff * falloff;
-        float rippleFrequency = 15.0;
-        float rippleSpeedLocal = 3.0;
-        float ripplePhase = distToInstance * rippleFrequency - time * rippleSpeedLocal;
-        float ripple1 = sin(ripplePhase) * 0.5 + 0.5;
-        float ripple2 = sin(ripplePhase * 1.3 + 1.0) * 0.5 + 0.5;
-        float ripplePattern = (ripple1 + ripple2 * 0.6) / 1.6;
-        float velocityMag = length(instanceVel);
-        vec2 instanceDir = velocityMag > 0.01 ? normalize(instanceVel) : vec2(0.0);
-        vec2 toInstanceNorm = normalize(toInstance);
-        float wakeFactor = max(0.0, dot(toInstanceNorm, instanceDir));
-        float movementIntensity = min(velocityMag * 3.0, 1.0);
-        float wakeIntensity = wakeFactor * wakeFactor * movementIntensity;
-        float combinedIntensity = ripplePattern * (1.0 - wakeIntensity * 0.4) + wakeIntensity;
-        float rippleIntensity = falloff * mouseStrength * combinedIntensity * instanceAlpha;
-        return toInstanceNorm * rippleIntensity * 0.08;
+    vec2 addWakeContribution(vec2 pos, vec2 vel, float alpha) {
+        if (alpha <= 0.001) return vec2(0.0);
+
+        float velMag = length(vel);
+        if (velMag < 0.001) return vec2(0.0);
+
+        vec2 moveDir = normalize(vel);
+        vec2 perpDir = vec2(-moveDir.y, moveDir.x);
+
+        vec2 toFrag = vUv - pos;
+        float dist = length(toFrag);
+        if (dist >= wakeRadius || dist < 0.0005) return vec2(0.0);
+
+        float along = dot(toFrag, moveDir);
+        float perp = dot(toFrag, perpDir);
+        float absPerp = abs(perp);
+
+        float distFalloff = 1.0 - dist / wakeRadius;
+        distFalloff *= distFalloff;
+
+        // Smooth side factor: replaces sign(perp) to avoid center-line seam
+        float smoothSide = perp / (absPerp + 0.005);
+
+        vec2 displacement = vec2(0.0);
+
+        // V-shaped wake behind the movement
+        float behind = max(0.0, -along);
+        if (behind > 0.001) {
+            float expectedPerp = behind * wakeAngle;
+            float armDist = abs(absPerp - expectedPerp);
+            float armThickness = 0.015 + behind * 0.05;
+            float onArm = exp(-(armDist * armDist) / (armThickness * armThickness));
+
+            float behindNorm = behind / max(wakeLength, 0.001);
+            float lengthFade = (1.0 - smoothstep(0.6, 1.0, behindNorm)) * smoothstep(0.0, 0.01, behind);
+
+            // Primary ripple crests along the wake arms
+            float phase1 = behind * wakeFrequency - time * wakeRippleSpeed;
+            float ripple1 = sin(phase1);
+
+            // Secondary ripple layer for richer texture
+            float phase2 = behind * wakeFrequency * 0.6 - time * wakeRippleSpeed * 0.8 + 1.5;
+            float ripple2 = sin(phase2) * 0.5;
+
+            float ripple = ripple1 + ripple2 * 0.4;
+
+            float armIntensity = onArm * lengthFade * ripple;
+            displacement += perpDir * smoothSide * armIntensity;
+
+            // Spreading ripples: faint circular rings that propagate outward from the wake
+            float spreadPhase = dist * wakeFrequency * 0.8 - time * wakeRippleSpeed * 1.2;
+            float spreadRipple = sin(spreadPhase) * 0.3;
+            float spreadEnvelope = onArm * lengthFade * 0.4;
+            displacement += normalize(toFrag) * spreadRipple * spreadEnvelope;
+        }
+
+        // Bow wave: compression ahead of the movement
+        float ahead = max(0.0, along);
+        if (ahead > 0.0 && ahead < wakeRadius * 0.3) {
+            float bowFade = 1.0 - ahead / (wakeRadius * 0.3);
+            bowFade *= bowFade;
+            float perpFade = exp(-(absPerp * absPerp) / 0.004);
+            displacement -= moveDir * bowFade * perpFade * 0.5;
+        }
+
+        // Center push: water displaced outward near the object
+        float centerSpread = 0.003;
+        float centerFade = exp(-(dist * dist) / centerSpread);
+        if (centerFade > 0.01) {
+            displacement += normalize(toFrag) * centerFade * 0.4;
+        }
+
+        float speedFactor = min(velMag * 2.0, 1.0);
+        // Smooth alpha curve so the effect tapers naturally instead of cutting off abruptly
+        float smoothAlpha = alpha * alpha * (3.0 - 2.0 * alpha);
+        displacement *= distFalloff * speedFactor * wakeStrength * smoothAlpha * 0.15;
+
+        return displacement;
     }
 
     void main() {
         float maskStrength = texture2D(maskMap, vUv).r;
         if (maskStrength < 0.00392) discard;
 
-        // AMBIENT RIPPLE - Keep this completely separate and unchanged
+        // AMBIENT RIPPLE
         vec2 rippleUV = vUv * rippleScale + time * rippleSpeed;
         vec3 normal = normalize(texture2D(rippleNormal, rippleUV).xyz * 2.0 - 1.0);
-        
-        // MOUSE INTERACTION - Instanced system (unrolled for WebGL 1 compatibility)
-        vec2 mouseDisplacement = vec2(0.0);
+
+        // WAKE INTERACTION (unrolled for WebGL 1 compatibility)
+        vec2 wakeDisplacement = vec2(0.0);
         if (mouseEnabled > 0.5 && mouseInstanceCount > 0) {
-            if (mouseInstanceCount > 0) mouseDisplacement += addInstanceContribution(mouseInstancePos0, mouseInstanceVel0, mouseInstanceAlpha0);
-            if (mouseInstanceCount > 1) mouseDisplacement += addInstanceContribution(mouseInstancePos1, mouseInstanceVel1, mouseInstanceAlpha1);
-            if (mouseInstanceCount > 2) mouseDisplacement += addInstanceContribution(mouseInstancePos2, mouseInstanceVel2, mouseInstanceAlpha2);
-            if (mouseInstanceCount > 3) mouseDisplacement += addInstanceContribution(mouseInstancePos3, mouseInstanceVel3, mouseInstanceAlpha3);
-            if (mouseInstanceCount > 4) mouseDisplacement += addInstanceContribution(mouseInstancePos4, mouseInstanceVel4, mouseInstanceAlpha4);
-            if (mouseInstanceCount > 5) mouseDisplacement += addInstanceContribution(mouseInstancePos5, mouseInstanceVel5, mouseInstanceAlpha5);
-            if (mouseInstanceCount > 6) mouseDisplacement += addInstanceContribution(mouseInstancePos6, mouseInstanceVel6, mouseInstanceAlpha6);
-            if (mouseInstanceCount > 7) mouseDisplacement += addInstanceContribution(mouseInstancePos7, mouseInstanceVel7, mouseInstanceAlpha7);
+            if (mouseInstanceCount > 0) wakeDisplacement += addWakeContribution(mouseInstancePos0, mouseInstanceVel0, mouseInstanceAlpha0);
+            if (mouseInstanceCount > 1) wakeDisplacement += addWakeContribution(mouseInstancePos1, mouseInstanceVel1, mouseInstanceAlpha1);
+            if (mouseInstanceCount > 2) wakeDisplacement += addWakeContribution(mouseInstancePos2, mouseInstanceVel2, mouseInstanceAlpha2);
+            if (mouseInstanceCount > 3) wakeDisplacement += addWakeContribution(mouseInstancePos3, mouseInstanceVel3, mouseInstanceAlpha3);
+            if (mouseInstanceCount > 4) wakeDisplacement += addWakeContribution(mouseInstancePos4, mouseInstanceVel4, mouseInstanceAlpha4);
+            if (mouseInstanceCount > 5) wakeDisplacement += addWakeContribution(mouseInstancePos5, mouseInstanceVel5, mouseInstanceAlpha5);
+            if (mouseInstanceCount > 6) wakeDisplacement += addWakeContribution(mouseInstancePos6, mouseInstanceVel6, mouseInstanceAlpha6);
+            if (mouseInstanceCount > 7) wakeDisplacement += addWakeContribution(mouseInstancePos7, mouseInstanceVel7, mouseInstanceAlpha7);
         }
-        
-        // Combine ambient ripple normal with mouse displacement
-        vec2 combinedDisplacement = normal.xy + mouseDisplacement;
-        
+
+        vec2 combinedDisplacement = normal.xy + wakeDisplacement;
         vec2 refractedUV = vUv + combinedDisplacement * refractionStrength * maskStrength;
         vec4 bgColor = texture2D(map, refractedUV);
 
-        gl_FragColor = vec4(bgColor.rgb, maskStrength);
+        // Subtle tint in wake-disturbed areas: darken troughs, lighten crests
+        float wakeMag = length(wakeDisplacement);
+        float tintAmount = wakeMag * wakeTint;
+        vec3 tintedColor = bgColor.rgb * (1.0 - tintAmount * 0.6) + vec3(0.7, 0.85, 1.0) * tintAmount * 0.15;
+
+        gl_FragColor = vec4(tintedColor, maskStrength);
     }
 `;
 
@@ -113,8 +176,7 @@ class WaterRippleEffect extends BaseEffect {
         super(scene, camera, renderer, parallaxInstance);
         this.effectType = 'area';
         
-        // Mouse interaction tracking - instanced system
-        // Will be initialized in init() after config is loaded
+        // Wake instanced system
         this.rippleInstances = [];
         this.maxInstances = 8;
         this.currentInstanceIndex = -1;
@@ -122,6 +184,23 @@ class WaterRippleEffect extends BaseEffect {
         this.fadeOutSpeed = 0.002;
         this.wasOverWater = false;
         this.lastMouseUV = new THREE.Vector2(-1, -1);
+        
+        // Velocity smoothing for wake activation and angle stabilization
+        this.velocityBuffer = [];       // magnitude buffer for activation gating
+        this.velocityVecBuffer = [];    // vector buffer for direction smoothing
+        this.velocityBufferSize = 5;
+        this.velocityThreshold = 0.1;
+        this.wakeActive = false;
+        
+        // Position easing — wake trails behind the mouse for a more natural feel
+        // Variable: fast movement → lower easing (more lag), slow → higher (tighter tracking)
+        this.positionEasingMin = 0.06;
+        this.positionEasingMax = 0.3;
+        this.easedPosition = new THREE.Vector2(-1, -1);
+        
+        // Trail breadcrumbs — frozen wake snapshots dropped along the path
+        this.trailSpacing = 0.03;
+        this.lastBreadcrumbPos = new THREE.Vector2(-1, -1);
         
         // Raycaster for accurate mouse-to-UV conversion
         this.raycaster = new THREE.Raycaster();
@@ -187,16 +266,17 @@ class WaterRippleEffect extends BaseEffect {
             const rippleSpeed = config.rippleSpeed ?? 0.05;
             const refractionStrength = config.refractionStrength ?? 0.02;
             
-            // Mouse interaction config
+            // Wake interaction config
             const mouseConfig = config.mouseInteraction || {};
-            const mouseEnabled = mouseConfig.enabled !== false; // Default enabled
-            const mouseStrength = mouseConfig.strength ?? 0.5;
-            const mouseRadius = mouseConfig.radius ?? 0.15;
-            // Fade speeds (lower = slower fade, ~0.001 = very slow, ~0.01 = faster)
+            const mouseEnabled = mouseConfig.enabled !== false;
             this.fadeInSpeed = mouseConfig.fadeInSpeed ?? mouseConfig.fadeSpeed ?? 0.002;
             this.fadeOutSpeed = mouseConfig.fadeOutSpeed ?? mouseConfig.fadeSpeed ?? 0.002;
-            // Hard limit: instances are removed after this many seconds (avoids runaway ripples if fade-out misbehaves)
             this.maxLifetime = mouseConfig.maxLifetime ?? 12;
+            this.velocityThreshold = mouseConfig.velocityThreshold ?? 0.1;
+            this.velocityBufferSize = mouseConfig.velocitySmoothing ?? 5;
+            this.positionEasingMin = mouseConfig.positionEasingMin ?? 0.06;
+            this.positionEasingMax = mouseConfig.positionEasingMax ?? 0.3;
+            this.trailSpacing = mouseConfig.trailSpacing ?? 0.03;
 
             const effectUniforms = {
                 map: { value: this.parallax.imageTexture },
@@ -206,10 +286,16 @@ class WaterRippleEffect extends BaseEffect {
                 rippleScale: { value: rippleScale },
                 rippleSpeed: { value: rippleSpeed },
                 refractionStrength: { value: refractionStrength },
-                // Mouse interaction uniforms - instanced system
-                mouseStrength: { value: mouseStrength },
-                mouseRadius: { value: mouseRadius },
+                // Wake uniforms
                 mouseEnabled: { value: mouseEnabled ? 1.0 : 0.0 },
+                wakeStrength: { value: mouseConfig.wakeStrength ?? mouseConfig.strength ?? 1.0 },
+                wakeRadius: { value: mouseConfig.wakeRadius ?? mouseConfig.radius ?? 0.15 },
+                wakeAngle: { value: mouseConfig.wakeAngle ?? 0.35 },
+                wakeLength: { value: mouseConfig.wakeLength ?? 0.25 },
+                wakeFrequency: { value: mouseConfig.wakeFrequency ?? 25.0 },
+                wakeRippleSpeed: { value: mouseConfig.wakeRippleSpeed ?? 2.0 },
+                wakeTint: { value: mouseConfig.wakeTint ?? 3.0 },
+                // Per-slot instance uniforms
                 mouseInstanceCount: { value: 0 },
                 mouseInstancePos0: { value: new THREE.Vector2(-1, -1) },
                 mouseInstancePos1: { value: new THREE.Vector2(-1, -1) },
@@ -287,76 +373,131 @@ class WaterRippleEffect extends BaseEffect {
             return;
         }
         
-        // Check if input is active (mouse on screen OR touch active)
         const inputActive = this.parallax.mouseOnScreen || this.isTouching;
         
-        // Track current state
         let isOverWater = false;
         let currentMouseUV = null;
         let currentMouseVelocity = new THREE.Vector2(0, 0);
         
         if (inputActive) {
-            // Input active - use raycasting to get accurate UV coordinates
             const mouseUV = this.getMouseUVFromRaycast();
-            
-            // Only consider "over water" when raycast hits AND mask at that UV is water
             if (mouseUV && mouseUV.x >= 0 && mouseUV.x <= 1 && mouseUV.y >= 0 && mouseUV.y <= 1) {
                 if (this.isUVOverWater(mouseUV.x, mouseUV.y)) {
                     isOverWater = true;
                     currentMouseUV = mouseUV;
                 }
-                
-                // Calculate velocity from previous mouse position
                 if (this.lastMouseUV.x >= 0 && this.lastMouseUV.y >= 0) {
                     const deltaUV = new THREE.Vector2().subVectors(mouseUV, this.lastMouseUV);
                     const velocityScale = 1.0 / Math.max(deltaTime, 0.001);
-                    currentMouseVelocity.set(
-                        deltaUV.x * velocityScale,
-                        deltaUV.y * velocityScale
-                    );
-                    const maxVelocity = 10.0;
-                    currentMouseVelocity.clampLength(0, maxVelocity);
+                    currentMouseVelocity.set(deltaUV.x * velocityScale, deltaUV.y * velocityScale);
+                    currentMouseVelocity.clampLength(0, 10.0);
                 }
-                
                 this.lastMouseUV.copy(mouseUV);
             }
         }
         
-        // Handle instance creation and updates
         if (isOverWater && currentMouseUV) {
-            // Check if this is a new entry (wasn't over water last frame)
-            const isNewEntry = !this.wasOverWater;
+            // Update velocity smoothing buffers (magnitude + direction)
+            this.velocityBuffer.push(currentMouseVelocity.length());
+            this.velocityVecBuffer.push(currentMouseVelocity.clone());
+            while (this.velocityBuffer.length > this.velocityBufferSize) this.velocityBuffer.shift();
+            while (this.velocityVecBuffer.length > this.velocityBufferSize) this.velocityVecBuffer.shift();
+            const smoothedVel = this.velocityBuffer.reduce((a, b) => a + b, 0) / this.velocityBuffer.length;
             
-            if (isNewEntry) {
-                // Create new ripple instance
-                this.createRippleInstance(currentMouseUV, currentMouseVelocity);
+            // Compute smoothed velocity vector (averages out micro-jitter in direction)
+            const smoothedVelocity = new THREE.Vector2(0, 0);
+            for (const v of this.velocityVecBuffer) smoothedVelocity.add(v);
+            smoothedVelocity.divideScalar(this.velocityVecBuffer.length);
+            
+            if (!this.wakeActive) {
+                if (smoothedVel >= this.velocityThreshold) {
+                    this.wakeActive = true;
+                    this.easedPosition.copy(currentMouseUV);
+                    this.lastBreadcrumbPos.copy(currentMouseUV);
+                    this.createRippleInstance(currentMouseUV, smoothedVelocity);
+                }
             } else {
-                // Update current active instance position and velocity
                 if (this.currentInstanceIndex >= 0 && this.currentInstanceIndex < this.rippleInstances.length) {
-                    const instance = this.rippleInstances[this.currentInstanceIndex];
-                    instance.position.copy(currentMouseUV);
-                    instance.velocity.copy(currentMouseVelocity);
-                    instance.targetAlpha = 1.0; // Keep fading in while over water
+                    // Variable easing: fast movement → more lag, slow → tighter tracking
+                    const maxSpeed = 3.0;
+                    const speedRatio = Math.min(smoothedVel / maxSpeed, 1.0);
+                    const easing = this.positionEasingMax + (this.positionEasingMin - this.positionEasingMax) * speedRatio;
+                    this.easedPosition.lerp(currentMouseUV, easing);
+                    const inst = this.rippleInstances[this.currentInstanceIndex];
+                    inst.position.copy(this.easedPosition);
+                    inst.velocity.copy(smoothedVelocity);
+                    inst.targetAlpha = 1.0;
+                    
+                    // Drop trail breadcrumbs along the path
+                    const distFromLastBreadcrumb = this.easedPosition.distanceTo(this.lastBreadcrumbPos);
+                    if (distFromLastBreadcrumb >= this.trailSpacing) {
+                        this.spawnBreadcrumb(this.easedPosition, smoothedVelocity);
+                        this.lastBreadcrumbPos.copy(this.easedPosition);
+                    }
+                }
+                if (smoothedVel < 0.01) {
+                    this.deactivateCurrentWake();
                 }
             }
         } else {
-            // Mouse left water - start fade-out on current instance
-            if (this.currentInstanceIndex >= 0 && this.currentInstanceIndex < this.rippleInstances.length) {
-                const instance = this.rippleInstances[this.currentInstanceIndex];
-                instance.targetAlpha = 0.0; // Start fade-out immediately
-                instance.velocity.multiplyScalar(0.9); // Decay velocity
-            }
-            this.currentInstanceIndex = -1; // No active instance
+            this.deactivateCurrentWake();
+            this.velocityBuffer.length = 0;
+            this.velocityVecBuffer.length = 0;
         }
         
-        // Update state tracking
         this.wasOverWater = isOverWater;
-        
-        // Update all instances (fade in/out)
         this.updateRippleInstances(deltaTime);
-        
-        // Update uniforms
         this.updateInstanceUniforms();
+    }
+    
+    deactivateCurrentWake() {
+        if (this.currentInstanceIndex >= 0 && this.currentInstanceIndex < this.rippleInstances.length) {
+            const inst = this.rippleInstances[this.currentInstanceIndex];
+            inst.targetAlpha = 0.0;
+            inst.fadeOutStartTime = this.time;
+            inst.fadeOutStartAlpha = inst.alpha;
+            // Store the frozen velocity magnitude for proportional reduction during fade
+            const velMag = inst.velocity.length();
+            inst.frozenVelMag = Math.max(velMag, 0.05);
+            if (velMag < 0.05) {
+                inst.velocity.normalize().multiplyScalar(0.05);
+            }
+        }
+        this.currentInstanceIndex = -1;
+        this.wakeActive = false;
+    }
+    
+    spawnBreadcrumb(position, velocity) {
+        // Drop a frozen wake snapshot along the trail — does NOT change currentInstanceIndex
+        const currentRef = this.currentInstanceIndex >= 0 ? this.rippleInstances[this.currentInstanceIndex] : null;
+        
+        const crumb = {
+            position: position.clone(),
+            velocity: velocity.clone(),
+            alpha: 0.8,
+            targetAlpha: 0.0,
+            fadeOutStartTime: this.time,
+            fadeOutStartAlpha: 0.8,
+            fadeInSpeed: this.fadeInSpeed,
+            fadeOutSpeed: this.fadeOutSpeed,
+            frozenVelMag: Math.max(velocity.length(), 0.05),
+            createdAt: this.time
+        };
+        
+        this.rippleInstances.push(crumb);
+        
+        // If we're over max, remove the oldest non-active instance
+        while (this.rippleInstances.length > this.maxInstances) {
+            const removeIdx = this.rippleInstances.findIndex(inst => inst !== currentRef);
+            if (removeIdx >= 0) {
+                this.rippleInstances.splice(removeIdx, 1);
+            } else {
+                break;
+            }
+        }
+        
+        // Restore currentInstanceIndex since the array may have shifted
+        this.currentInstanceIndex = currentRef ? this.rippleInstances.indexOf(currentRef) : -1;
     }
     
     createRippleInstance(position, velocity) {
@@ -400,21 +541,34 @@ class WaterRippleEffect extends BaseEffect {
         });
         this.currentInstanceIndex = currentRef ? this.rippleInstances.indexOf(currentRef) : -1;
 
-        // 2) Update fade for each instance
+        // 2) Update fade and velocity for each instance
         for (let i = 0; i < this.rippleInstances.length; i++) {
             const instance = this.rippleInstances[i];
-            const isFadingIn = instance.targetAlpha > instance.alpha;
-            const currentFadeSpeed = isFadingIn ? instance.fadeInSpeed : instance.fadeOutSpeed;
-            const fadeTime = 1.0 / Math.max(currentFadeSpeed, 0.0001);
-            const fadeFactor = Math.pow(0.5, deltaTime / fadeTime);
-            instance.alpha = instance.targetAlpha + (instance.alpha - instance.targetAlpha) * fadeFactor;
-            if (instance.targetAlpha === 0.0) instance.velocity.multiplyScalar(0.9);
+            
+            if (instance.targetAlpha === 0.0 && instance.fadeOutStartTime !== undefined) {
+                // LINEAR fade-out: guaranteed to reach exactly 0 at fadeOut duration
+                const fadeOutDuration = 1.0 / Math.max(instance.fadeOutSpeed, 0.0001);
+                const elapsed = this.time - instance.fadeOutStartTime;
+                const t = Math.min(elapsed / fadeOutDuration, 1.0);
+                instance.alpha = instance.fadeOutStartAlpha * (1.0 - t);
+                if (t >= 1.0) instance.alpha = 0;
+                
+                // Proportionally reduce velocity so the wake pattern dissolves with the fade
+                if (instance.frozenVelMag > 0) {
+                    const targetVelMag = instance.frozenVelMag * (1.0 - t);
+                    instance.velocity.normalize().multiplyScalar(Math.max(targetVelMag, 0.0001));
+                }
+            } else {
+                // Fade-in: exponential approach toward targetAlpha (fast ramp-up)
+                const fadeTime = 1.0 / Math.max(instance.fadeInSpeed, 0.0001);
+                const fadeFactor = Math.pow(0.5, deltaTime / fadeTime);
+                instance.alpha = instance.targetAlpha + (instance.alpha - instance.targetAlpha) * fadeFactor;
+            }
         }
 
         // 3) Remove instances that have fully faded out — but never remove the current active ripple
-        //    (new ripples start at alpha 0 and would otherwise be removed before they fade in)
         this.rippleInstances = this.rippleInstances.filter(inst =>
-            inst.alpha > 0.001 || inst === currentRef
+            inst.alpha > 0 || inst === currentRef
         );
         this.currentInstanceIndex = currentRef ? this.rippleInstances.indexOf(currentRef) : -1;
     }

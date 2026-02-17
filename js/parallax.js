@@ -602,10 +602,10 @@ class SimpleParallax {
         // Load image and depth map
         await this.loadImageAndDepthMap();
         
-        // Effect manager: load in background so first paint isn't blocked
+        // Initialize effect manager after scene is ready
         console.log('SimpleParallax: Initializing effect manager');
         this.effectManager = new EffectManager(this.scene, this.camera, this.renderer, this);
-        this.effectManager.loadEffects(); // don't await — show scene immediately, effects attach when ready
+        await this.effectManager.loadEffects();
         
         // Setup input event listeners
         this.setupEventListeners();
@@ -624,7 +624,7 @@ class SimpleParallax {
             console.log('Desktop/tablet detected, using mouse/touch controls');
         }
         
-        // Start animation loop immediately (effects update as they finish loading)
+        // Start animation loop
         this.animate();
     }
 
@@ -1015,8 +1015,8 @@ class SimpleParallax {
             this.uniforms.mouseDelta.value.set(this.targetX, -this.targetY);
         }
 
-        // Update effects (safe when still loading — only already-loaded effects are updated)
-        if (this.effectManager) {
+        // Update effects
+        if (this.effectManager && this.effectManager.isReady()) {
             this.effectManager.update(deltaTime);
         }
 
@@ -1039,7 +1039,7 @@ class SimpleParallax {
     
     // Notify effects to update their positions based on mesh scaling
     updateEffectPositions() {
-        if (this.effectManager && this.effectManager.effectInstances.length > 0) {
+        if (this.effectManager && this.effectManager.isReady()) {
             console.log('SimpleParallax: Notifying effects of mesh transformation change');
             this.effectManager.effectInstances.forEach(effectInstance => {
                 if (effectInstance.updatePositionsForMeshTransform) {

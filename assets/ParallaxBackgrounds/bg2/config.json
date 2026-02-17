@@ -409,11 +409,21 @@
       "refractionStrength": 0.01,
       "mouseInteraction": {
         "enabled": true,
-        "strength": 15,
-        "radius": 0.15,
+        "wakeStrength": 20.0,
+        "wakeRadius": 0.15,
+        "wakeAngle": 0.35,
+        "wakeLength": 1,
+        "wakeFrequency": 25.0,
+        "wakeRippleSpeed": 2.5,
+        "wakeTint": 0.1,
+        "velocityThreshold": 0.1,
+        "velocitySmoothing": 5,
+        "positionEasingMin": 0.15,
+        "positionEasingMax": 0.5,
+        "trailSpacing": 0.2,
         "fadeInSpeed": 10,
-        "fadeOutSpeed": 10,
-        "maxLifetime": 120
+        "fadeOutSpeed": 0.1,
+        "maxLifetime": 12
       }
     }
   }
