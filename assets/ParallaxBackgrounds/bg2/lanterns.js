@@ -24,16 +24,18 @@ class LanternEffect extends BaseEffect {
         log('LanternEffect: Initializing twinkling lantern effect');
         
         try {
-            // Load the flare texture for lanterns
-            const flareTexture = await this.loadTexture('./assets/ParallaxBackgrounds/bg2/assets/flare_1.png');
-            log('LanternEffect: Successfully loaded flare texture');
+            // Load the flare texture for lanterns (only if not already loaded)
+            if (!this.flareTexture) {
+                this.flareTexture = await this.loadTexture('./assets/ParallaxBackgrounds/bg2/assets/flare_1.png');
+                log('LanternEffect: Successfully loaded flare texture');
+            }
             
-            // Store texture for creating particles
-            this.flareTexture = flareTexture;
-            
-            // Load lantern configuration from parallax config
-            const lanternConfig = await this.loadLanternConfig();
-            log('LanternEffect: Loaded lantern configuration:', lanternConfig);
+            // Load lantern configuration from parallax config (store full config for reference)
+            if (!this.fullLanternConfig) {
+                this.fullLanternConfig = await this.loadLanternConfig();
+                log('LanternEffect: Loaded lantern configuration:', this.fullLanternConfig);
+            }
+            const lanternConfig = this.fullLanternConfig;
             
             log(`LanternEffect: Creating ${lanternConfig.lanterns.length} lantern systems`);
             
@@ -560,8 +562,24 @@ class LanternEffect extends BaseEffect {
             this.lanternSystems = [];
         }
         
+        // Don't clear fullLanternConfig or flareTexture - keep them for re-init
+        // Reset time to prevent stale state
+        this.time = 0;
+        
+        // Remove textures from parent's textures array so they don't get disposed
+        // We want to keep them for re-init
+        if (this.flareTexture && this.textures.includes(this.flareTexture)) {
+            const index = this.textures.indexOf(this.flareTexture);
+            this.textures.splice(index, 1);
+        }
+        
         // Call parent cleanup
         super.cleanup();
+        
+        // Restore texture reference after cleanup
+        if (this.flareTexture) {
+            this.textures.push(this.flareTexture);
+        }
     }
 }
 

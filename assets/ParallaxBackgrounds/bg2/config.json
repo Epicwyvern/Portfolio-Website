@@ -58,7 +58,7 @@
         "blendMode": "AdditiveBlending",
         "depthWrite": false,
         "alphaTest": 0.01,
-        "useGSAP": true,
+        "useGSAP": false,
         "enableRotation": false
       },
       "lanterns": [
@@ -73,7 +73,6 @@
           "newParticleSpeed": 1.2,
           "movementFactor": 0.3,
           "blendMode": "AdditiveBlending",
-          "useGSAP": true,
           "enableRotation": false
         },
         {
@@ -87,7 +86,6 @@
           "newParticleSpeed": 1.2,
           "movementFactor": 0.3,
           "blendMode": "AdditiveBlending",
-          "useGSAP": true,
           "enableRotation": false
         },
         {
@@ -101,7 +99,6 @@
           "newParticleSpeed": 1.2,
           "movementFactor": 0.4,
           "blendMode": "AdditiveBlending",
-          "useGSAP": true,
           "enableRotation": false
         },
         {
@@ -115,7 +112,6 @@
           "newParticleSpeed": 1.2,
           "movementFactor": 0.3,
           "blendMode": "AdditiveBlending",
-          "useGSAP": true,
           "enableRotation": false
         },
         {
@@ -129,7 +125,6 @@
           "newParticleSpeed": 1.2,
           "movementFactor": 0.4,
           "blendMode": "AdditiveBlending",
-          "useGSAP": true,
           "enableRotation": false
         }, 
         {
@@ -143,7 +138,6 @@
           "newParticleSpeed": 1.2,
           "movementFactor": 0.4,
           "blendMode": "AdditiveBlending",
-          "useGSAP": true,
           "enableRotation": false
         },
         {
@@ -157,7 +151,6 @@
           "newParticleSpeed": 1.2,
           "movementFactor": 0.4,
           "blendMode": "AdditiveBlending",
-          "useGSAP": true,
           "enableRotation": false
         },
         {
@@ -171,7 +164,6 @@
           "newParticleSpeed": 1.2,
           "movementFactor": 0.4,
           "blendMode": "AdditiveBlending",
-          "useGSAP": true,
           "enableRotation": false
         },
         {
@@ -185,7 +177,6 @@
           "newParticleSpeed": 1.2,
           "movementFactor": 0.4,
           "blendMode": "AdditiveBlending",
-          "useGSAP": true,
           "enableRotation": false
         },
         {
@@ -199,7 +190,6 @@
           "newParticleSpeed": 1.2,
           "movementFactor": 0.4,
           "blendMode": "AdditiveBlending",
-          "useGSAP": true,
           "enableRotation": false
         },
         {
@@ -213,7 +203,6 @@
           "newParticleSpeed": 1.2,
           "movementFactor": 0.8,
           "blendMode": "AdditiveBlending",
-          "useGSAP": true,
           "enableRotation": false
         },
         {
@@ -227,7 +216,6 @@
           "newParticleSpeed": 1.2,
           "movementFactor": 0.6,
           "blendMode": "AdditiveBlending",
-          "useGSAP": true,
           "enableRotation": false
         },
         {
@@ -241,7 +229,6 @@
           "newParticleSpeed": 1.2,
           "movementFactor": 0.6,
           "blendMode": "AdditiveBlending",
-          "useGSAP": true,
           "enableRotation": false
         },
         {
@@ -255,7 +242,6 @@
           "newParticleSpeed": 1.2,
           "movementFactor": 0.6,
           "blendMode": "AdditiveBlending",
-          "useGSAP": true,
           "enableRotation": false
         },
         {
@@ -269,7 +255,6 @@
           "newParticleSpeed": 1.2,
           "movementFactor": 0.6,
           "blendMode": "AdditiveBlending",
-          "useGSAP": true,
           "enableRotation": false
         },
         {
@@ -283,7 +268,6 @@
           "newParticleSpeed": 1.2,
           "movementFactor": 0.6,
           "blendMode": "AdditiveBlending",
-          "useGSAP": true,
           "enableRotation": false
         },
         {
@@ -297,7 +281,6 @@
           "newParticleSpeed": 1.2,
           "movementFactor": 0.6,
           "blendMode": "AdditiveBlending",
-          "useGSAP": true,
           "enableRotation": false
         },
         {
@@ -311,7 +294,6 @@
           "newParticleSpeed": 1.2,
           "movementFactor": 0.6,
           "blendMode": "AdditiveBlending",
-          "useGSAP": true,
           "enableRotation": false
         },
         {
@@ -325,7 +307,6 @@
           "newParticleSpeed": 1.2,
           "movementFactor": 0.4,
           "blendMode": "AdditiveBlending",
-          "useGSAP": true,
           "enableRotation": false
         },{
           "name": "Lan19",
@@ -338,7 +319,6 @@
           "newParticleSpeed": 1.2,
           "movementFactor": 0.4,
           "blendMode": "AdditiveBlending",
-          "useGSAP": true,
           "enableRotation": false
         },
         {
@@ -352,7 +332,6 @@
           "newParticleSpeed": 1.2,
           "movementFactor": 0.4,
           "blendMode": "AdditiveBlending",
-          "useGSAP": true,
           "enableRotation": false
         },
         {
@@ -366,7 +345,6 @@
           "newParticleSpeed": 1.2,
           "movementFactor": 0.2,
           "blendMode": "AdditiveBlending",
-          "useGSAP": true,
           "enableRotation": false
         },
         {
@@ -380,7 +358,6 @@
           "newParticleSpeed": 1.2,
           "movementFactor": 0.1,
           "blendMode": "AdditiveBlending",
-          "useGSAP": true,
           "enableRotation": false
         },
         {
@@ -394,7 +371,6 @@
           "newParticleSpeed": 1.2,
           "movementFactor": 0.1,
           "blendMode": "AdditiveBlending",
-          "useGSAP": true,
           "enableRotation": false
         }
       ]

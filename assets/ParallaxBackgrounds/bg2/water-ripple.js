@@ -236,31 +236,44 @@ class WaterRippleEffect extends BaseEffect {
             };
 
             let maskTexture, rippleTexture;
-            try {
-                [maskTexture, rippleTexture] = await Promise.all([
-                    loadWithFallback(maskPath, ['assets/bg2WaterBW.png', 'assets/bg2WaterBW.webp'].map(f => basePath + f).filter(p => p !== maskPath)),
-                    loadWithFallback(ripplePath, ['assets/waterripplenormal.jpg', 'assets/waterripplenormal.webp'].map(f => basePath + f).filter(p => p !== ripplePath))
-                ]);
-            } catch (textureError) {
-                console.error('WaterRippleEffect: Failed to load textures. Check maskPath and ripplePath in config. Tried:', maskPath, ripplePath, textureError);
-                throw textureError;
+            // Reuse textures if already loaded
+            if (this.maskTexture && this.rippleTexture) {
+                maskTexture = this.maskTexture;
+                rippleTexture = this.rippleTexture;
+            } else {
+                try {
+                    [maskTexture, rippleTexture] = await Promise.all([
+                        loadWithFallback(maskPath, ['assets/bg2WaterBW.png', 'assets/bg2WaterBW.webp'].map(f => basePath + f).filter(p => p !== maskPath)),
+                        loadWithFallback(ripplePath, ['assets/waterripplenormal.jpg', 'assets/waterripplenormal.webp'].map(f => basePath + f).filter(p => p !== ripplePath))
+                    ]);
+                } catch (textureError) {
+                    console.error('WaterRippleEffect: Failed to load textures. Check maskPath and ripplePath in config. Tried:', maskPath, ripplePath, textureError);
+                    throw textureError;
+                }
             }
 
             maskTexture.wrapS = maskTexture.wrapT = THREE.ClampToEdgeWrapping;
             rippleTexture.wrapS = rippleTexture.wrapT = THREE.RepeatWrapping;
 
+            // Store textures for reuse if already loaded
+            if (!this.maskTexture) this.maskTexture = maskTexture;
+            if (!this.rippleTexture) this.rippleTexture = rippleTexture;
+            
             this.textures.push(maskTexture, rippleTexture);
             
             // Defer mask sampler so it doesn't block first paint (was causing long black screen)
-            this.maskSampler = null;
-            const scheduleMaskSampler = () => {
-                if (typeof requestIdleCallback !== 'undefined') {
-                    requestIdleCallback(() => { this.maskSampler = this.buildMaskSampler(maskTexture); }, { timeout: 500 });
-                } else {
-                    setTimeout(() => { this.maskSampler = this.buildMaskSampler(maskTexture); }, 0);
-                }
-            };
-            scheduleMaskSampler();
+            // Rebuild if not already built or if texture changed
+            if (!this.maskSampler || this.maskSampler.maskTexture !== maskTexture) {
+                this.maskSampler = null;
+                const scheduleMaskSampler = () => {
+                    if (typeof requestIdleCallback !== 'undefined') {
+                        requestIdleCallback(() => { this.maskSampler = this.buildMaskSampler(maskTexture); }, { timeout: 500 });
+                    } else {
+                        setTimeout(() => { this.maskSampler = this.buildMaskSampler(maskTexture); }, 0);
+                    }
+                };
+                scheduleMaskSampler();
+            }
 
             const rippleScale = config.rippleScale ?? 3.0;
             const rippleSpeed = config.rippleSpeed ?? 0.05;
@@ -704,6 +717,17 @@ class WaterRippleEffect extends BaseEffect {
     }
 
     cleanup() {
+        // Clear wake instances
+        this.rippleInstances = [];
+        this.wakeActive = false;
+        this.wasOverWater = false;
+        this.lastMouseUV = new THREE.Vector2(-1, -1);
+        this.easedPosition = new THREE.Vector2(-1, -1);
+        this.lastBreadcrumbPos = new THREE.Vector2(-1, -1);
+        this.velocityBuffer = [];
+        this.velocityVecBuffer = [];
+        this.isTouching = false;
+        
         // Remove mouse/touch tracking event listeners
         if (this.parallax && this.parallax.canvas) {
             if (this._mouseMoveHandler) {
@@ -723,7 +747,28 @@ class WaterRippleEffect extends BaseEffect {
         
         this.overlayMesh = null;
         this.uniforms = null;
+        this.time = 0;
+        
+        // Remove textures from parent's textures array so they don't get disposed
+        // We want to keep them for re-init
+        if (this.maskTexture && this.textures.includes(this.maskTexture)) {
+            const index = this.textures.indexOf(this.maskTexture);
+            this.textures.splice(index, 1);
+        }
+        if (this.rippleTexture && this.textures.includes(this.rippleTexture)) {
+            const index = this.textures.indexOf(this.rippleTexture);
+            this.textures.splice(index, 1);
+        }
+        
         super.cleanup();
+        
+        // Restore texture references after cleanup
+        if (this.maskTexture) {
+            this.textures.push(this.maskTexture);
+        }
+        if (this.rippleTexture) {
+            this.textures.push(this.rippleTexture);
+        }
     }
 }
 
