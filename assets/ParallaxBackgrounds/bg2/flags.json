@@ -36,7 +36,8 @@
     },
     "water-ripple": {
       "enabled": true,
-      "wakeInteraction": true
+      "wakeInteraction": true,
+      "splooshInteraction": true
     }
   }
 }

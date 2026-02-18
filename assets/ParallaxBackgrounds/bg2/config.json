@@ -379,7 +379,7 @@
       "maskPath": "assets/bg2WaterMask.webp",
       "maskPattern": "bg2WaterBW*.webp",
       "ripplePath": "assets/waterripplenormal.webp",
-      "overlaySegments": 256,
+      "overlaySegments": 64,
       "rippleScale": 5.0,
       "rippleSpeed": 0.05,
       "refractionStrength": 0.01,
@@ -400,6 +400,40 @@
         "fadeInSpeed": 10,
         "fadeOutSpeed": 0.1,
         "maxLifetime": 12
+      },
+      "splooshInteraction": {
+        "enabled": true,
+        "strength": 30.0,
+        "radius": 0.1,
+        "frequency": 200.0,
+        "speed": 0.08,
+        "tint": 0.1,
+        "duration": 3.0
+      },
+      "particleEffects": {
+        "enabled": true,
+        "sploosh": {
+          "count": [35, 50],
+          "velocityUp": [0.6, 1.2],
+          "velocitySpread": 0.4,
+          "gravity": 2.0,
+          "lifetime": [0.4, 0.9],
+          "scale": [0.02, 0.06],
+          "opacity": 0.5
+        },
+        "spray": {
+          "enabled": true,
+          "velocityThreshold": 0.4,
+          "count": [15, 30],
+          "spawnInterval": 0.03,
+          "trail": [0.7, 1.0],
+          "velocityUp": [0.3, 0.8],
+          "velocitySpread": 0.5,
+          "gravity": 4.0,
+          "lifetime": [0.2, 0.5],
+          "scale": [0.01, 0.035],
+          "opacity": 0.4
+        }
       }
     }
   }

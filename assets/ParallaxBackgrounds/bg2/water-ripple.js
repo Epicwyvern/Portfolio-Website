@@ -4,6 +4,7 @@
 
 import BaseEffect from '../../../js/base-effect.js';
 import * as THREE from 'https://unpkg.com/three@0.172.0/build/three.module.js';
+import WaterParticleEmitter from './water-particle-emitter.js';
 
 const log = (...args) => {
     if (window.location.pathname.endsWith('test-effects.html')) {
@@ -54,6 +55,39 @@ const DEFAULT_FRAGMENT_SHADER = `
     uniform float mouseInstanceAlpha5;
     uniform float mouseInstanceAlpha6;
     uniform float mouseInstanceAlpha7;
+
+    // Sploosh (click/tap splash) uniforms
+    uniform float splooshEnabled;
+    uniform float splooshStrength;
+    uniform float splooshRadius;
+    uniform float splooshFrequency;
+    uniform float splooshSpeed;
+    uniform float splooshTint;
+    uniform int splooshInstanceCount;
+    uniform vec2 splooshPos0;
+    uniform vec2 splooshPos1;
+    uniform vec2 splooshPos2;
+    uniform vec2 splooshPos3;
+    uniform vec2 splooshPos4;
+    uniform vec2 splooshPos5;
+    uniform vec2 splooshPos6;
+    uniform vec2 splooshPos7;
+    uniform float splooshAlpha0;
+    uniform float splooshAlpha1;
+    uniform float splooshAlpha2;
+    uniform float splooshAlpha3;
+    uniform float splooshAlpha4;
+    uniform float splooshAlpha5;
+    uniform float splooshAlpha6;
+    uniform float splooshAlpha7;
+    uniform float splooshAge0;
+    uniform float splooshAge1;
+    uniform float splooshAge2;
+    uniform float splooshAge3;
+    uniform float splooshAge4;
+    uniform float splooshAge5;
+    uniform float splooshAge6;
+    uniform float splooshAge7;
 
     varying vec2 vUv;
 
@@ -137,6 +171,52 @@ const DEFAULT_FRAGMENT_SHADER = `
         return displacement;
     }
 
+    // Returns vec4(rawDispX, rawDispY, wavefrontEnvelope, 0)
+    // rawDisp: wave oscillation + burst, weighted by spread/behindFront but NOT Gaussian envelope
+    // wavefrontEnvelope: Gaussian envelope for max-combination across sources (enables interference)
+    vec4 splooshSourceData(vec2 pos, float alpha, float age) {
+        if (alpha <= 0.001 || age < 0.0) return vec4(0.0);
+
+        vec2 toFrag = vUv - pos;
+        float dist = length(toFrag);
+        if (dist > splooshRadius || dist < 0.0001) return vec4(0.0);
+
+        vec2 dir = normalize(toFrag);
+        float normDist = dist / splooshRadius;
+        float wavefront = age * splooshSpeed;
+
+        // Traveling circular wave
+        float k = splooshFrequency;
+        float omega = splooshSpeed * splooshFrequency;
+        float wave = sin(k * dist - omega * age);
+
+        // Spatial gates
+        float behindFront = smoothstep(wavefront + 0.008, wavefront - 0.005, dist);
+        float spreadDecay = 1.0 / (1.0 + dist * 6.0);
+        float radiusFade = 1.0 - normDist * normDist;
+        float smoothAlpha = alpha * alpha * (3.0 - 2.0 * alpha);
+
+        // Wavefront Gaussian (computed separately for max-combination across sources)
+        float waveDist = dist - wavefront;
+        float envWidth = 0.012 + wavefront * 0.1;
+        float gaussian = exp(-(waveDist * waveDist) / (2.0 * envWidth * envWidth));
+
+        // Impact crown burst at center
+        float burstDecay = exp(-age * 5.0);
+        float burstWidth = 0.01 + age * 0.025;
+        float burst = exp(-(dist * dist) / (burstWidth * burstWidth)) * burstDecay;
+
+        // Raw wave signal (oscillation + burst, for interference summation)
+        vec2 waveSignal = dir * wave * spreadDecay * behindFront;
+        vec2 burstSignal = dir * burst * 2.5;
+        vec2 rawDisp = (waveSignal + burstSignal) * smoothAlpha * radiusFade;
+
+        // Per-source wavefront envelope (Gaussian + radius + alpha)
+        float srcEnv = gaussian * radiusFade * smoothAlpha;
+
+        return vec4(rawDisp, srcEnv, 0.0);
+    }
+
     void main() {
         float maskStrength = texture2D(maskMap, vUv).r;
         if (maskStrength < 0.00392) discard;
@@ -158,13 +238,54 @@ const DEFAULT_FRAGMENT_SHADER = `
             if (mouseInstanceCount > 7) wakeDisplacement += addWakeContribution(mouseInstancePos7, mouseInstanceVel7, mouseInstanceAlpha7);
         }
 
-        vec2 combinedDisplacement = normal.xy + wakeDisplacement;
+        // SPLOOSH INTERACTION — unified wave interference (unrolled for WebGL 1)
+        vec2 splooshDisplacement = vec2(0.0);
+        if (splooshEnabled > 0.5 && splooshInstanceCount > 0) {
+            vec4 s0 = vec4(0.0), s1 = vec4(0.0), s2 = vec4(0.0), s3 = vec4(0.0);
+            vec4 s4 = vec4(0.0), s5 = vec4(0.0), s6 = vec4(0.0), s7 = vec4(0.0);
+            if (splooshInstanceCount > 0) s0 = splooshSourceData(splooshPos0, splooshAlpha0, splooshAge0);
+            if (splooshInstanceCount > 1) s1 = splooshSourceData(splooshPos1, splooshAlpha1, splooshAge1);
+            if (splooshInstanceCount > 2) s2 = splooshSourceData(splooshPos2, splooshAlpha2, splooshAge2);
+            if (splooshInstanceCount > 3) s3 = splooshSourceData(splooshPos3, splooshAlpha3, splooshAge3);
+            if (splooshInstanceCount > 4) s4 = splooshSourceData(splooshPos4, splooshAlpha4, splooshAge4);
+            if (splooshInstanceCount > 5) s5 = splooshSourceData(splooshPos5, splooshAlpha5, splooshAge5);
+            if (splooshInstanceCount > 6) s6 = splooshSourceData(splooshPos6, splooshAlpha6, splooshAge6);
+            if (splooshInstanceCount > 7) s7 = splooshSourceData(splooshPos7, splooshAlpha7, splooshAge7);
+
+            vec2 rawSum = s0.xy + s1.xy + s2.xy + s3.xy + s4.xy + s5.xy + s6.xy + s7.xy;
+            float combinedEnv = max(max(max(s0.z, s1.z), max(s2.z, s3.z)), max(max(s4.z, s5.z), max(s6.z, s7.z)));
+
+            // Skip expensive work if this fragment is outside all sploosh envelopes
+            if (combinedEnv > 0.001) {
+                float rawMag = length(rawSum);
+                float satK = 3.0;
+                vec2 saturatedDisp = rawMag > 0.0001
+                    ? rawSum * (tanh(rawMag * satK) / (rawMag * satK))
+                    : vec2(0.0);
+
+                // Mask edge attenuation (only sampled when sploosh is actually visible here)
+                float edgeFade = 1.0;
+                if (maskStrength < 0.5) {
+                    float edgeDist = 0.003;
+                    float nearEdge = min(
+                        min(texture2D(maskMap, vUv + vec2(-edgeDist, 0.0)).r, texture2D(maskMap, vUv + vec2(edgeDist, 0.0)).r),
+                        min(texture2D(maskMap, vUv + vec2(0.0, edgeDist)).r, texture2D(maskMap, vUv + vec2(0.0, -edgeDist)).r)
+                    );
+                    edgeFade = smoothstep(0.0, 0.15, nearEdge);
+                }
+
+                splooshDisplacement = saturatedDisp * combinedEnv * splooshStrength * edgeFade * 0.15;
+            }
+        }
+
+        vec2 combinedDisplacement = normal.xy + wakeDisplacement + splooshDisplacement;
         vec2 refractedUV = vUv + combinedDisplacement * refractionStrength * maskStrength;
         vec4 bgColor = texture2D(map, refractedUV);
 
-        // Subtle tint in wake-disturbed areas: darken troughs, lighten crests
+        // Subtle tint in disturbed areas: darken troughs, lighten crests
         float wakeMag = length(wakeDisplacement);
-        float tintAmount = wakeMag * wakeTint;
+        float splooshMag = length(splooshDisplacement);
+        float tintAmount = wakeMag * wakeTint + splooshMag * splooshTint;
         vec3 tintedColor = bgColor.rgb * (1.0 - tintAmount * 0.6) + vec3(0.7, 0.85, 1.0) * tintAmount * 0.15;
 
         gl_FragColor = vec4(tintedColor, maskStrength);
@@ -202,6 +323,15 @@ class WaterRippleEffect extends BaseEffect {
         this.trailSpacing = 0.03;
         this.lastBreadcrumbPos = new THREE.Vector2(-1, -1);
         
+        // Sploosh (click/tap splash) system
+        this.splooshInstances = [];
+        this.maxSplooshInstances = 8;
+        this.splooshDuration = 3.0;
+        
+        // Particle emitter (instantiated in init after scene is ready)
+        this.particleEmitter = null;
+        this.lastSprayTime = 0;
+        
         // Raycaster for accurate mouse-to-UV conversion
         this.raycaster = new THREE.Raycaster();
         this.mouse = new THREE.Vector2();
@@ -210,6 +340,25 @@ class WaterRippleEffect extends BaseEffect {
         this.mousePixelX = 0;
         this.mousePixelY = 0;
         this.isTouching = false;
+
+        // Pre-allocated temp objects to avoid per-frame GC pressure
+        this._tmpCurrentVelocity = new THREE.Vector2();
+        this._tmpSmoothedVelocity = new THREE.Vector2();
+        this._tmpVelDir3 = new THREE.Vector3();
+        this._cachedConfig = null;
+        this._cachedConfigFrame = -1;
+        this._cachedRect = null;
+        this._cachedRectFrame = -1;
+        this._frameCounter = 0;
+
+        // Static uniform name arrays (avoid recreating every frame)
+        this._wakePosList = ['mouseInstancePos0','mouseInstancePos1','mouseInstancePos2','mouseInstancePos3','mouseInstancePos4','mouseInstancePos5','mouseInstancePos6','mouseInstancePos7'];
+        this._wakeVelList = ['mouseInstanceVel0','mouseInstanceVel1','mouseInstanceVel2','mouseInstanceVel3','mouseInstanceVel4','mouseInstanceVel5','mouseInstanceVel6','mouseInstanceVel7'];
+        this._wakeAlphaList = ['mouseInstanceAlpha0','mouseInstanceAlpha1','mouseInstanceAlpha2','mouseInstanceAlpha3','mouseInstanceAlpha4','mouseInstanceAlpha5','mouseInstanceAlpha6','mouseInstanceAlpha7'];
+        this._splooshPosList = ['splooshPos0','splooshPos1','splooshPos2','splooshPos3','splooshPos4','splooshPos5','splooshPos6','splooshPos7'];
+        this._splooshAlphaList = ['splooshAlpha0','splooshAlpha1','splooshAlpha2','splooshAlpha3','splooshAlpha4','splooshAlpha5','splooshAlpha6','splooshAlpha7'];
+        this._splooshAgeList = ['splooshAge0','splooshAge1','splooshAge2','splooshAge3','splooshAge4','splooshAge5','splooshAge6','splooshAge7'];
+
         this.setupMouseTracking();
     }
 
@@ -291,6 +440,12 @@ class WaterRippleEffect extends BaseEffect {
             this.positionEasingMin = mouseConfig.positionEasingMin ?? 0.06;
             this.positionEasingMax = mouseConfig.positionEasingMax ?? 0.3;
             this.trailSpacing = mouseConfig.trailSpacing ?? 0.03;
+            
+            // Sploosh interaction config
+            const splooshConfig = config.splooshInteraction || {};
+            const splooshFlag = this.parallax.getFlag('effects.water-ripple.splooshInteraction');
+            const splooshEnabled = splooshFlag && splooshConfig.enabled !== false;
+            this.splooshDuration = splooshConfig.duration ?? 3.0;
 
             const effectUniforms = {
                 map: { value: this.parallax.imageTexture },
@@ -334,25 +489,66 @@ class WaterRippleEffect extends BaseEffect {
                 mouseInstanceAlpha4: { value: 0 },
                 mouseInstanceAlpha5: { value: 0 },
                 mouseInstanceAlpha6: { value: 0 },
-                mouseInstanceAlpha7: { value: 0 }
+                mouseInstanceAlpha7: { value: 0 },
+                // Sploosh uniforms
+                splooshEnabled: { value: splooshEnabled ? 1.0 : 0.0 },
+                splooshStrength: { value: splooshConfig.strength ?? 1.5 },
+                splooshRadius: { value: splooshConfig.radius ?? 0.2 },
+                splooshFrequency: { value: splooshConfig.frequency ?? 20.0 },
+                splooshSpeed: { value: splooshConfig.speed ?? 0.08 },
+                splooshTint: { value: splooshConfig.tint ?? 1.0 },
+                splooshInstanceCount: { value: 0 },
+                splooshPos0: { value: new THREE.Vector2(-1, -1) },
+                splooshPos1: { value: new THREE.Vector2(-1, -1) },
+                splooshPos2: { value: new THREE.Vector2(-1, -1) },
+                splooshPos3: { value: new THREE.Vector2(-1, -1) },
+                splooshPos4: { value: new THREE.Vector2(-1, -1) },
+                splooshPos5: { value: new THREE.Vector2(-1, -1) },
+                splooshPos6: { value: new THREE.Vector2(-1, -1) },
+                splooshPos7: { value: new THREE.Vector2(-1, -1) },
+                splooshAlpha0: { value: 0 },
+                splooshAlpha1: { value: 0 },
+                splooshAlpha2: { value: 0 },
+                splooshAlpha3: { value: 0 },
+                splooshAlpha4: { value: 0 },
+                splooshAlpha5: { value: 0 },
+                splooshAlpha6: { value: 0 },
+                splooshAlpha7: { value: 0 },
+                splooshAge0: { value: 0 },
+                splooshAge1: { value: 0 },
+                splooshAge2: { value: 0 },
+                splooshAge3: { value: 0 },
+                splooshAge4: { value: 0 },
+                splooshAge5: { value: 0 },
+                splooshAge6: { value: 0 },
+                splooshAge7: { value: 0 }
             };
 
             this.overlayMesh = this.createCoarseAreaEffectMesh(
                 DEFAULT_FRAGMENT_SHADER,
                 effectUniforms,
-                { overlaySegments: config.overlaySegments ?? 256, depthWrite: false }
+                { overlaySegments: config.overlaySegments ?? 64, depthWrite: false }
             );
             this.overlayMesh.position.z = 0.01;
 
             this.uniforms = effectUniforms;
             this.time = 0;
             
+            // Particle emitter for sploosh spout + speed spray
+            const particleConfig = config.particleEffects || {};
+            if (particleConfig.enabled !== false && !this.particleEmitter) {
+                this.particleEmitter = new WaterParticleEmitter(this.scene, this.camera, this.renderer);
+            }
+            
+            // Prepare background color sampler for particle tinting
+            this._initColorSampler();
+            
             // Setup mouse/touch tracking for wake interaction (restore after cleanup)
             this.setupMouseTracking();
             
             this.isInitialized = true;
 
-            log(`WaterRippleEffect: Water ripple initialized (overlaySegments: ${config.overlaySegments ?? 256})`);
+            log(`WaterRippleEffect: Water ripple initialized (overlaySegments: ${config.overlaySegments ?? 64})`);
         } catch (error) {
             console.error('WaterRippleEffect: Error during initialization:', error);
             throw error;
@@ -360,21 +556,39 @@ class WaterRippleEffect extends BaseEffect {
     }
 
     getConfig() {
-        if (!this.parallax?.config?.effects?.waterRipple) {
-            return {};
+        if (this._cachedConfigFrame === this._frameCounter) return this._cachedConfig;
+        this._cachedConfig = this.parallax?.config?.effects?.waterRipple || {};
+        this._cachedConfigFrame = this._frameCounter;
+        return this._cachedConfig;
+    }
+
+    _getCanvasRect() {
+        if (this._cachedRectFrame === this._frameCounter) return this._cachedRect;
+        if (this.parallax?.canvas) {
+            this._cachedRect = this.parallax.canvas.getBoundingClientRect();
         }
-        return this.parallax.config.effects.waterRipple;
+        this._cachedRectFrame = this._frameCounter;
+        return this._cachedRect;
     }
 
     update(deltaTime) {
         if (!this.isInitialized || !this.overlayMesh) return;
 
+        this._frameCounter++;
         const frameDelta = Number.isFinite(deltaTime) && deltaTime > 0 ? deltaTime : 0.016;
         this.time += frameDelta;
         if (this.uniforms?.time) this.uniforms.time.value = this.time;
 
         // Update mouse interaction
         this.updateMouseInteraction(frameDelta);
+        this.updateSplooshInteraction(frameDelta);
+        
+        // Update particle emitter
+        if (this.particleEmitter) {
+            const particleConfig = this.getConfig().particleEffects || {};
+            const gravity = particleConfig.sploosh?.gravity ?? particleConfig.spray?.gravity ?? 4.0;
+            this.particleEmitter.update(frameDelta, gravity);
+        }
 
         this.syncWithParallaxMesh(this.overlayMesh);
         this.overlayMesh.position.z = 0.01;
@@ -402,7 +616,8 @@ class WaterRippleEffect extends BaseEffect {
         
         let isOverWater = false;
         let currentMouseUV = null;
-        let currentMouseVelocity = new THREE.Vector2(0, 0);
+        const currentMouseVelocity = this._tmpCurrentVelocity;
+        currentMouseVelocity.set(0, 0);
         
         if (inputActive) {
             const mouseUV = this.getMouseUVFromRaycast();
@@ -412,9 +627,10 @@ class WaterRippleEffect extends BaseEffect {
                     currentMouseUV = mouseUV;
                 }
                 if (this.lastMouseUV.x >= 0 && this.lastMouseUV.y >= 0) {
-                    const deltaUV = new THREE.Vector2().subVectors(mouseUV, this.lastMouseUV);
+                    const dx = mouseUV.x - this.lastMouseUV.x;
+                    const dy = mouseUV.y - this.lastMouseUV.y;
                     const velocityScale = 1.0 / Math.max(deltaTime, 0.001);
-                    currentMouseVelocity.set(deltaUV.x * velocityScale, deltaUV.y * velocityScale);
+                    currentMouseVelocity.set(dx * velocityScale, dy * velocityScale);
                     currentMouseVelocity.clampLength(0, 10.0);
                 }
                 this.lastMouseUV.copy(mouseUV);
@@ -422,16 +638,24 @@ class WaterRippleEffect extends BaseEffect {
         }
         
         if (isOverWater && currentMouseUV) {
-            // Update velocity smoothing buffers (magnitude + direction)
             this.velocityBuffer.push(currentMouseVelocity.length());
-            this.velocityVecBuffer.push(currentMouseVelocity.clone());
+            // Reuse Vector2 objects in the ring buffer instead of cloning
+            if (this.velocityVecBuffer.length < this.velocityBufferSize) {
+                this.velocityVecBuffer.push(new THREE.Vector2(currentMouseVelocity.x, currentMouseVelocity.y));
+            } else {
+                // Shift oldest out and reuse the object
+                const recycled = this.velocityVecBuffer.shift();
+                recycled.set(currentMouseVelocity.x, currentMouseVelocity.y);
+                this.velocityVecBuffer.push(recycled);
+            }
             while (this.velocityBuffer.length > this.velocityBufferSize) this.velocityBuffer.shift();
-            while (this.velocityVecBuffer.length > this.velocityBufferSize) this.velocityVecBuffer.shift();
-            const smoothedVel = this.velocityBuffer.reduce((a, b) => a + b, 0) / this.velocityBuffer.length;
+            let smoothedVelSum = 0;
+            for (let vi = 0; vi < this.velocityBuffer.length; vi++) smoothedVelSum += this.velocityBuffer[vi];
+            const smoothedVel = smoothedVelSum / this.velocityBuffer.length;
             
-            // Compute smoothed velocity vector (averages out micro-jitter in direction)
-            const smoothedVelocity = new THREE.Vector2(0, 0);
-            for (const v of this.velocityVecBuffer) smoothedVelocity.add(v);
+            const smoothedVelocity = this._tmpSmoothedVelocity;
+            smoothedVelocity.set(0, 0);
+            for (let vi = 0; vi < this.velocityVecBuffer.length; vi++) smoothedVelocity.add(this.velocityVecBuffer[vi]);
             smoothedVelocity.divideScalar(this.velocityVecBuffer.length);
             
             if (!this.wakeActive) {
@@ -462,6 +686,39 @@ class WaterRippleEffect extends BaseEffect {
                 }
                 if (smoothedVel < 0.01) {
                     this.deactivateCurrentWake();
+                }
+            }
+            
+            // Speed spray particles when moving fast enough through water
+            if (this.particleEmitter && this.wakeActive) {
+                const sprayConfig = this.getConfig().particleEffects?.spray || {};
+                if (sprayConfig.enabled !== false) {
+                    const sprayThreshold = sprayConfig.velocityThreshold ?? 1.5;
+                    if (smoothedVel >= sprayThreshold) {
+                        const worldPos = this.getWorldPosAtPixel(this.mousePixelX, this.mousePixelY);
+                        if (worldPos) {
+                            worldPos.z += 0.02;
+                            this._tmpVelDir3.set(smoothedVelocity.x, smoothedVelocity.y, 0);
+                            const sprayUV = currentMouseUV || this.easedPosition;
+                            const waterColor = this._sampleBackgroundColor(sprayUV.x, sprayUV.y);
+                            this.particleEmitter.emitSpray(worldPos, this._tmpVelDir3, {
+                                spawnInterval: sprayConfig.spawnInterval ?? 0.05,
+                                countMin: sprayConfig.count?.[0] ?? 2,
+                                countMax: sprayConfig.count?.[1] ?? 4,
+                                velocityUpMin: sprayConfig.velocityUp?.[0] ?? 0.3,
+                                velocityUpMax: sprayConfig.velocityUp?.[1] ?? 0.8,
+                                trailMin: sprayConfig.trail?.[0] ?? 0.5,
+                                trailMax: sprayConfig.trail?.[1] ?? 1.5,
+                                velocitySpread: sprayConfig.velocitySpread ?? 0.2,
+                                lifetimeMin: sprayConfig.lifetime?.[0] ?? 0.2,
+                                lifetimeMax: sprayConfig.lifetime?.[1] ?? 0.5,
+                                scaleMin: sprayConfig.scale?.[0] ?? 0.01,
+                                scaleMax: sprayConfig.scale?.[1] ?? 0.035,
+                                opacity: sprayConfig.opacity ?? 0.8,
+                                waterColor: waterColor
+                            });
+                        }
+                    }
                 }
             }
         } else {
@@ -526,8 +783,14 @@ class WaterRippleEffect extends BaseEffect {
     }
     
     createRippleInstance(position, velocity) {
-        // Remove instances that have faded out completely
-        this.rippleInstances = this.rippleInstances.filter(inst => inst.alpha > 0.001);
+        // Compact dead instances in-place
+        let wi = 0;
+        for (let ri = 0; ri < this.rippleInstances.length; ri++) {
+            if (this.rippleInstances[ri].alpha > 0.001) {
+                this.rippleInstances[wi++] = this.rippleInstances[ri];
+            }
+        }
+        this.rippleInstances.length = wi;
         
         // Create new instance (createdAt used for max lifetime cleanup)
         const instance = {
@@ -555,46 +818,44 @@ class WaterRippleEffect extends BaseEffect {
             ? this.rippleInstances[this.currentInstanceIndex]
             : null;
 
-        // 1) Max lifetime: only remove *inactive* instances that have exceeded max lifetime.
-        //    Never remove the current active ripple (mouse still on water).
         const maxAge = typeof this.maxLifetime === 'number' && this.maxLifetime > 0 ? this.maxLifetime : 12;
-        this.rippleInstances = this.rippleInstances.filter(inst => {
-            const isActive = inst === currentRef;
-            if (isActive) return true;
-            const age = this.time - (inst.createdAt ?? 0);
-            return age < maxAge;
-        });
-        this.currentInstanceIndex = currentRef ? this.rippleInstances.indexOf(currentRef) : -1;
 
-        // 2) Update fade and velocity for each instance
+        // Single pass: update fade/velocity and compact dead instances in-place (no .filter() allocation)
+        let writeIdx = 0;
         for (let i = 0; i < this.rippleInstances.length; i++) {
             const instance = this.rippleInstances[i];
-            
+            const isActive = instance === currentRef;
+
+            // Max lifetime check (skip active)
+            if (!isActive) {
+                const age = this.time - (instance.createdAt ?? 0);
+                if (age >= maxAge) continue;
+            }
+
+            // Update fade
             if (instance.targetAlpha === 0.0 && instance.fadeOutStartTime !== undefined) {
-                // LINEAR fade-out: guaranteed to reach exactly 0 at fadeOut duration
                 const fadeOutDuration = 1.0 / Math.max(instance.fadeOutSpeed, 0.0001);
                 const elapsed = this.time - instance.fadeOutStartTime;
                 const t = Math.min(elapsed / fadeOutDuration, 1.0);
                 instance.alpha = instance.fadeOutStartAlpha * (1.0 - t);
                 if (t >= 1.0) instance.alpha = 0;
                 
-                // Proportionally reduce velocity so the wake pattern dissolves with the fade
                 if (instance.frozenVelMag > 0) {
                     const targetVelMag = instance.frozenVelMag * (1.0 - t);
                     instance.velocity.normalize().multiplyScalar(Math.max(targetVelMag, 0.0001));
                 }
             } else {
-                // Fade-in: exponential approach toward targetAlpha (fast ramp-up)
                 const fadeTime = 1.0 / Math.max(instance.fadeInSpeed, 0.0001);
                 const fadeFactor = Math.pow(0.5, deltaTime / fadeTime);
                 instance.alpha = instance.targetAlpha + (instance.alpha - instance.targetAlpha) * fadeFactor;
             }
-        }
 
-        // 3) Remove instances that have fully faded out — but never remove the current active ripple
-        this.rippleInstances = this.rippleInstances.filter(inst =>
-            inst.alpha > 0 || inst === currentRef
-        );
+            // Remove fully faded (but never remove active)
+            if (instance.alpha <= 0 && !isActive) continue;
+
+            this.rippleInstances[writeIdx++] = instance;
+        }
+        this.rippleInstances.length = writeIdx;
         this.currentInstanceIndex = currentRef ? this.rippleInstances.indexOf(currentRef) : -1;
     }
     
@@ -604,20 +865,188 @@ class WaterRippleEffect extends BaseEffect {
         const count = Math.min(this.rippleInstances.length, this.maxInstances);
         this.uniforms.mouseInstanceCount.value = count;
         
-        const posNames = ['mouseInstancePos0', 'mouseInstancePos1', 'mouseInstancePos2', 'mouseInstancePos3', 'mouseInstancePos4', 'mouseInstancePos5', 'mouseInstancePos6', 'mouseInstancePos7'];
-        const velNames = ['mouseInstanceVel0', 'mouseInstanceVel1', 'mouseInstanceVel2', 'mouseInstanceVel3', 'mouseInstanceVel4', 'mouseInstanceVel5', 'mouseInstanceVel6', 'mouseInstanceVel7'];
-        const alphaNames = ['mouseInstanceAlpha0', 'mouseInstanceAlpha1', 'mouseInstanceAlpha2', 'mouseInstanceAlpha3', 'mouseInstanceAlpha4', 'mouseInstanceAlpha5', 'mouseInstanceAlpha6', 'mouseInstanceAlpha7'];
-        
         for (let i = 0; i < this.maxInstances; i++) {
             if (i < count) {
                 const instance = this.rippleInstances[i];
-                this.uniforms[posNames[i]].value.copy(instance.position);
-                this.uniforms[velNames[i]].value.copy(instance.velocity);
-                this.uniforms[alphaNames[i]].value = instance.alpha;
+                this.uniforms[this._wakePosList[i]].value.copy(instance.position);
+                this.uniforms[this._wakeVelList[i]].value.copy(instance.velocity);
+                this.uniforms[this._wakeAlphaList[i]].value = instance.alpha;
             } else {
-                this.uniforms[posNames[i]].value.set(-1, -1);
-                this.uniforms[velNames[i]].value.set(0, 0);
-                this.uniforms[alphaNames[i]].value = 0.0;
+                this.uniforms[this._wakePosList[i]].value.set(-1, -1);
+                this.uniforms[this._wakeVelList[i]].value.set(0, 0);
+                this.uniforms[this._wakeAlphaList[i]].value = 0.0;
+            }
+        }
+    }
+    
+    handleSploosh(pixelX, pixelY) {
+        if (!this.uniforms || !this.overlayMesh) return;
+        
+        const splooshFlag = this.parallax.getFlag('effects.water-ripple.splooshInteraction');
+        const splooshConfig = this.getConfig().splooshInteraction || {};
+        if (!splooshFlag || splooshConfig.enabled === false) return;
+        
+        const uv = this.getUVAtPixel(pixelX, pixelY);
+        if (!uv || uv.x < 0 || uv.x > 1 || uv.y < 0 || uv.y > 1) return;
+        if (!this.isUVOverWater(uv.x, uv.y)) return;
+        
+        log(`WaterRippleEffect: Sploosh at UV (${uv.x.toFixed(3)}, ${uv.y.toFixed(3)})`);
+        this.createSplooshInstance(uv);
+        
+        // Emit sploosh burst particles using raycast world position
+        if (this.particleEmitter) {
+            const worldPos = this.getWorldPosAtPixel(pixelX, pixelY);
+            if (!worldPos) return;
+            worldPos.z += 0.02;
+            const pConfig = this.getConfig().particleEffects?.sploosh || {};
+            const waterColor = this._sampleBackgroundColor(uv.x, uv.y);
+            log(`WaterRippleEffect: Sploosh particles at (${worldPos.x.toFixed(3)}, ${worldPos.y.toFixed(3)}), water color: rgb(${(waterColor.r*255)|0}, ${(waterColor.g*255)|0}, ${(waterColor.b*255)|0})`);
+            this.particleEmitter.emitSploosh(worldPos, {
+                countMin: pConfig.count?.[0] ?? 15,
+                countMax: pConfig.count?.[1] ?? 25,
+                velocityUpMin: pConfig.velocityUp?.[0] ?? 1.2,
+                velocityUpMax: pConfig.velocityUp?.[1] ?? 3.0,
+                velocitySpread: pConfig.velocitySpread ?? 0.6,
+                velocityForward: pConfig.velocityForward ?? 0.08,
+                lifetimeMin: pConfig.lifetime?.[0] ?? 0.4,
+                lifetimeMax: pConfig.lifetime?.[1] ?? 0.9,
+                scaleMin: pConfig.scale?.[0] ?? 0.02,
+                scaleMax: pConfig.scale?.[1] ?? 0.06,
+                opacity: pConfig.opacity ?? 0.9,
+                waterColor: waterColor
+            });
+        }
+    }
+    
+    getUVAtPixel(pixelX, pixelY) {
+        if (!this.parallax || !this.parallax.canvas || !this.overlayMesh) return null;
+        const rect = this._getCanvasRect();
+        if (!rect) return null;
+        this.mouse.x = ((pixelX / rect.width) * 2) - 1;
+        this.mouse.y = -((pixelY / rect.height) * 2) + 1;
+        this.raycaster.setFromCamera(this.mouse, this.camera);
+        const intersects = this.raycaster.intersectObject(this.overlayMesh);
+        if (intersects.length > 0 && intersects[0].uv) {
+            return intersects[0].uv.clone();
+        }
+        return null;
+    }
+    
+    getWorldPosAtPixel(pixelX, pixelY) {
+        if (!this.parallax || !this.parallax.canvas || !this.overlayMesh) return null;
+        const rect = this._getCanvasRect();
+        if (!rect) return null;
+        this.mouse.x = ((pixelX / rect.width) * 2) - 1;
+        this.mouse.y = -((pixelY / rect.height) * 2) + 1;
+        this.raycaster.setFromCamera(this.mouse, this.camera);
+        const intersects = this.raycaster.intersectObject(this.overlayMesh);
+        if (intersects.length > 0) {
+            return intersects[0].point.clone();
+        }
+        return null;
+    }
+    
+    _initColorSampler() {
+        if (this._colorSamplerCanvas) return;
+        try {
+            const tex = this.parallax?.imageTexture;
+            if (!tex || !tex.image) return;
+            const img = tex.image;
+            const canvas = document.createElement('canvas');
+            canvas.width = img.naturalWidth || img.width;
+            canvas.height = img.naturalHeight || img.height;
+            const ctx = canvas.getContext('2d', { willReadFrequently: true });
+            ctx.drawImage(img, 0, 0);
+            this._colorSamplerCanvas = canvas;
+            this._colorSamplerCtx = ctx;
+            log(`WaterRippleEffect: Color sampler initialized (${canvas.width}x${canvas.height})`);
+        } catch (e) {
+            log('WaterRippleEffect: Failed to init color sampler:', e);
+        }
+    }
+    
+    _sampleBackgroundColor(u, v) {
+        if (!this._colorSamplerCtx) return { r: 0.15, g: 0.25, b: 0.35 };
+        const canvas = this._colorSamplerCanvas;
+        const px = Math.round(u * (canvas.width - 1));
+        const py = Math.round((1 - v) * (canvas.height - 1));
+        try {
+            const data = this._colorSamplerCtx.getImageData(px, py, 1, 1).data;
+            return { r: data[0] / 255, g: data[1] / 255, b: data[2] / 255 };
+        } catch (e) {
+            return { r: 0.15, g: 0.25, b: 0.35 };
+        }
+    }
+    
+    createSplooshInstance(uv) {
+        let wi = 0;
+        for (let ri = 0; ri < this.splooshInstances.length; ri++) {
+            if (this.splooshInstances[ri].alpha > 0.001) {
+                this.splooshInstances[wi++] = this.splooshInstances[ri];
+            }
+        }
+        this.splooshInstances.length = wi;
+        
+        const splooshConfig = this.getConfig().splooshInteraction || {};
+        const instance = {
+            position: uv.clone(),
+            birthTime: this.time,
+            alpha: 1.0,
+            duration: splooshConfig.duration ?? this.splooshDuration
+        };
+        
+        this.splooshInstances.push(instance);
+        
+        if (this.splooshInstances.length > this.maxSplooshInstances) {
+            this.splooshInstances.shift();
+        }
+    }
+    
+    updateSplooshInteraction(deltaTime) {
+        if (!this.uniforms) return;
+        
+        const splooshFlag = this.parallax.getFlag('effects.water-ripple.splooshInteraction');
+        const splooshConfig = this.getConfig().splooshInteraction || {};
+        const shouldBeEnabled = splooshFlag && splooshConfig.enabled !== false;
+        
+        this.uniforms.splooshEnabled.value = shouldBeEnabled ? 1.0 : 0.0;
+        
+        if (!shouldBeEnabled) {
+            this.splooshInstances = [];
+            this.updateSplooshUniforms();
+            return;
+        }
+        
+        // Update alpha and compact dead instances in-place (no .filter() allocation)
+        let writeIdx = 0;
+        for (let i = 0; i < this.splooshInstances.length; i++) {
+            const inst = this.splooshInstances[i];
+            const age = this.time - inst.birthTime;
+            inst.alpha = Math.max(0, 1.0 - age / inst.duration);
+            if (inst.alpha > 0) {
+                this.splooshInstances[writeIdx++] = inst;
+            }
+        }
+        this.splooshInstances.length = writeIdx;
+        this.updateSplooshUniforms();
+    }
+    
+    updateSplooshUniforms() {
+        if (!this.uniforms) return;
+        
+        const count = Math.min(this.splooshInstances.length, this.maxSplooshInstances);
+        this.uniforms.splooshInstanceCount.value = count;
+        
+        for (let i = 0; i < this.maxSplooshInstances; i++) {
+            if (i < count) {
+                const inst = this.splooshInstances[i];
+                this.uniforms[this._splooshPosList[i]].value.copy(inst.position);
+                this.uniforms[this._splooshAlphaList[i]].value = inst.alpha;
+                this.uniforms[this._splooshAgeList[i]].value = this.time - inst.birthTime;
+            } else {
+                this.uniforms[this._splooshPosList[i]].value.set(-1, -1);
+                this.uniforms[this._splooshAlphaList[i]].value = 0.0;
+                this.uniforms[this._splooshAgeList[i]].value = 0.0;
             }
         }
     }
@@ -636,6 +1065,12 @@ class WaterRippleEffect extends BaseEffect {
         if (this._touchEndHandler) {
             this.parallax.canvas.removeEventListener('touchend', this._touchEndHandler);
             this.parallax.canvas.removeEventListener('touchcancel', this._touchEndHandler);
+        }
+        if (this._clickHandler) {
+            this.parallax.canvas.removeEventListener('click', this._clickHandler);
+        }
+        if (this._touchStartHandler) {
+            this.parallax.canvas.removeEventListener('touchstart', this._touchStartHandler);
         }
         
         const canvas = this.parallax.canvas;
@@ -661,15 +1096,35 @@ class WaterRippleEffect extends BaseEffect {
             this.isTouching = false;
         };
         
+        const handleClick = (event) => {
+            const rect = canvas.getBoundingClientRect();
+            const px = event.clientX - rect.left;
+            const py = event.clientY - rect.top;
+            this.handleSploosh(px, py);
+        };
+        
+        const handleTouchStart = (event) => {
+            if (event.touches.length > 0) {
+                const rect = canvas.getBoundingClientRect();
+                const px = event.touches[0].clientX - rect.left;
+                const py = event.touches[0].clientY - rect.top;
+                this.handleSploosh(px, py);
+            }
+        };
+        
         canvas.addEventListener('mousemove', handleMouseMove);
         canvas.addEventListener('touchmove', handleTouchMove, { passive: false });
         canvas.addEventListener('touchend', handleTouchEnd);
         canvas.addEventListener('touchcancel', handleTouchEnd);
+        canvas.addEventListener('click', handleClick);
+        canvas.addEventListener('touchstart', handleTouchStart, { passive: true });
         
         // Store cleanup functions
         this._mouseMoveHandler = handleMouseMove;
         this._touchMoveHandler = handleTouchMove;
         this._touchEndHandler = handleTouchEnd;
+        this._clickHandler = handleClick;
+        this._touchStartHandler = handleTouchStart;
     }
     
     buildMaskSampler(maskTexture) {
@@ -704,32 +1159,19 @@ class WaterRippleEffect extends BaseEffect {
     }
     
     getMouseUVFromRaycast() {
-        // Use raycasting to get accurate UV coordinates from mouse position
-        // This is the most reliable method - it uses the actual mesh geometry
+        if (!this.parallax || !this.parallax.canvas || !this.overlayMesh) return null;
         
-        if (!this.parallax || !this.parallax.canvas || !this.overlayMesh) {
-            return null;
-        }
+        const rect = this._getCanvasRect();
+        if (!rect) return null;
         
-        const canvas = this.parallax.canvas;
-        const rect = canvas.getBoundingClientRect();
-        
-        // Convert pixel coordinates to normalized device coordinates (-1 to 1)
         this.mouse.x = ((this.mousePixelX / rect.width) * 2) - 1;
-        this.mouse.y = -((this.mousePixelY / rect.height) * 2) + 1; // Invert Y axis
+        this.mouse.y = -((this.mousePixelY / rect.height) * 2) + 1;
         
-        // Update raycaster with camera and mouse position
         this.raycaster.setFromCamera(this.mouse, this.camera);
-        
-        // Intersect with the overlay mesh
         const intersects = this.raycaster.intersectObject(this.overlayMesh);
         
-        if (intersects.length > 0) {
-            const intersection = intersects[0];
-            // Get UV coordinates from the intersection
-            if (intersection.uv) {
-                return intersection.uv.clone();
-            }
+        if (intersects.length > 0 && intersects[0].uv) {
+            return intersects[0].uv.clone();
         }
         
         return null;
@@ -751,6 +1193,15 @@ class WaterRippleEffect extends BaseEffect {
         this.velocityVecBuffer = [];
         this.isTouching = false;
         
+        // Clear sploosh instances
+        this.splooshInstances = [];
+        
+        // Clean up particle emitter
+        if (this.particleEmitter) {
+            this.particleEmitter.cleanup();
+            this.particleEmitter = null;
+        }
+        
         // Remove mouse/touch tracking event listeners
         if (this.parallax && this.parallax.canvas) {
             if (this._mouseMoveHandler) {
@@ -765,6 +1216,14 @@ class WaterRippleEffect extends BaseEffect {
                 this.parallax.canvas.removeEventListener('touchend', this._touchEndHandler);
                 this.parallax.canvas.removeEventListener('touchcancel', this._touchEndHandler);
                 this._touchEndHandler = null;
+            }
+            if (this._clickHandler) {
+                this.parallax.canvas.removeEventListener('click', this._clickHandler);
+                this._clickHandler = null;
+            }
+            if (this._touchStartHandler) {
+                this.parallax.canvas.removeEventListener('touchstart', this._touchStartHandler);
+                this._touchStartHandler = null;
             }
         }
         
