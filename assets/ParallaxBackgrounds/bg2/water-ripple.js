@@ -281,7 +281,8 @@ class WaterRippleEffect extends BaseEffect {
             
             // Wake interaction config
             const mouseConfig = config.mouseInteraction || {};
-            const mouseEnabled = mouseConfig.enabled !== false;
+            const wakeInteractionFlag = this.parallax.getFlag('effects.water-ripple.wakeInteraction');
+            const mouseEnabled = wakeInteractionFlag && mouseConfig.enabled !== false;
             this.fadeInSpeed = mouseConfig.fadeInSpeed ?? mouseConfig.fadeSpeed ?? 0.002;
             this.fadeOutSpeed = mouseConfig.fadeOutSpeed ?? mouseConfig.fadeSpeed ?? 0.002;
             this.maxLifetime = mouseConfig.maxLifetime ?? 12;
@@ -345,6 +346,10 @@ class WaterRippleEffect extends BaseEffect {
 
             this.uniforms = effectUniforms;
             this.time = 0;
+            
+            // Setup mouse/touch tracking for wake interaction (restore after cleanup)
+            this.setupMouseTracking();
+            
             this.isInitialized = true;
 
             log(`WaterRippleEffect: Water ripple initialized (overlaySegments: ${config.overlaySegments ?? 256})`);
@@ -380,10 +385,16 @@ class WaterRippleEffect extends BaseEffect {
         
         const wakeInteraction = this.parallax.getFlag('effects.water-ripple.wakeInteraction');
         const mouseConfig = this.getConfig().mouseInteraction || {};
-        if (!wakeInteraction || mouseConfig.enabled === false) {
-            this.uniforms.mouseEnabled.value = 0.0;
+        const shouldBeEnabled = wakeInteraction && mouseConfig.enabled !== false;
+        
+        // Update uniform immediately when flag changes
+        this.uniforms.mouseEnabled.value = shouldBeEnabled ? 1.0 : 0.0;
+        
+        if (!shouldBeEnabled) {
             this.rippleInstances = [];
             this.updateInstanceUniforms();
+            this.wakeActive = false;
+            this.wasOverWater = false;
             return;
         }
         
@@ -614,6 +625,18 @@ class WaterRippleEffect extends BaseEffect {
     setupMouseTracking() {
         // Track mouse/touch position directly from DOM events for accurate raycasting
         if (!this.parallax || !this.parallax.canvas) return;
+        
+        // Remove existing listeners if they exist (prevent duplicates on re-init)
+        if (this._mouseMoveHandler) {
+            this.parallax.canvas.removeEventListener('mousemove', this._mouseMoveHandler);
+        }
+        if (this._touchMoveHandler) {
+            this.parallax.canvas.removeEventListener('touchmove', this._touchMoveHandler);
+        }
+        if (this._touchEndHandler) {
+            this.parallax.canvas.removeEventListener('touchend', this._touchEndHandler);
+            this.parallax.canvas.removeEventListener('touchcancel', this._touchEndHandler);
+        }
         
         const canvas = this.parallax.canvas;
         
