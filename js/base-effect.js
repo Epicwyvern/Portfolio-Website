@@ -23,10 +23,30 @@ class BaseEffect {
         this.textures = []; // Store textures for cleanup
         this.isInitialized = false;
         
+        /** @type {boolean} Whether this effect is enabled (used by feature flags). Default true. */
+        this.enabled = true;
+        
+        /** @type {string} Effect name as registered in EffectManager (e.g. 'lanterns', 'water-ripple'). Set by EffectManager. */
+        this.effectName = '';
+        
         /** @type {'point'|'area'} Effect type: 'point' for localized effects (e.g. lanterns), 'area' for mask-based overlays (e.g. water ripple). Default 'point'. */
         this.effectType = 'point';
         
         log('BaseEffect: Base effect initialized');
+    }
+    
+    isEnabled() {
+        return this.enabled;
+    }
+    
+    async setEnabled(enabled) {
+        if (this.enabled === !!enabled) return;
+        this.enabled = !!enabled;
+        if (this.enabled) {
+            await this.init();
+        } else {
+            this.cleanup();
+        }
     }
     
     // Abstract method to be implemented by specific effects

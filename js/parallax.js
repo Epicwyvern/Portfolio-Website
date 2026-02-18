@@ -87,6 +87,9 @@ class SimpleParallax {
         // Effect system
         this.effectManager = null;
         
+        // Feature flags (loaded from flags.json per background)
+        this.flags = {};
+        
         // Mesh transformation tracking for effects synchronization
         this.meshTransform = {
             scale: 1.0,
@@ -305,6 +308,69 @@ class SimpleParallax {
             }
         } catch (error) {
             console.log('Error loading config, using defaults:', error);
+        }
+    }
+
+    async loadFlags() {
+        try {
+            const flagsPath = `./assets/ParallaxBackgrounds/${this.backgroundName}/flags.json`;
+            const response = await fetch(flagsPath);
+            if (response.ok) {
+                const data = await response.json();
+                this.flags = data;
+                console.log('Loaded flags:', this.flags);
+            } else {
+                this.flags = {};
+                console.log(`No flags file at ${flagsPath}, all flags default to true`);
+            }
+        } catch (error) {
+            this.flags = {};
+            console.log('Error loading flags, using defaults:', error);
+        }
+    }
+
+    getFlag(path, defaultValue = true) {
+        if (!path || typeof path !== 'string') return defaultValue;
+        const keys = path.split('.');
+        let current = this.flags;
+        for (const key of keys) {
+            if (current == null || typeof current !== 'object') return this.getFlagConfigFallback(path, defaultValue);
+            current = current[key];
+        }
+        if (typeof current === 'boolean') return current;
+        return this.getFlagConfigFallback(path, defaultValue);
+    }
+
+    getFlagConfigFallback(path, defaultValue) {
+        const s = this.config?.settings;
+        const e = this.config?.effects;
+        if (path === 'parallax.autoMovement' && s && 'autoMovementEnabled' in s) return s.autoMovementEnabled !== false;
+        if (path === 'parallax.tiltControls' && s && 'orientationEnabled' in s) return s.orientationEnabled !== false;
+        if (path === 'effects.water-ripple.wakeInteraction' && e?.waterRipple?.mouseInteraction && 'enabled' in e.waterRipple.mouseInteraction) return e.waterRipple.mouseInteraction.enabled !== false;
+        return defaultValue;
+    }
+
+    setFlag(path, value) {
+        if (!path || typeof path !== 'string') return;
+        const keys = path.split('.');
+        if (keys.length === 0) return;
+        let current = this.flags;
+        for (let i = 0; i < keys.length - 1; i++) {
+            const key = keys[i];
+            if (!(key in current) || typeof current[key] !== 'object') {
+                current[key] = {};
+            }
+            current = current[key];
+        }
+        current[keys[keys.length - 1]] = value;
+        // Side effect: if toggling an effect's enabled flag, sync with EffectManager
+        const match = path.match(/^effects\.([^.]+)\.enabled$/);
+        if (match && this.effectManager) {
+            const effectName = match[1];
+            const effect = this.effectManager.getEffect(effectName);
+            if (effect && typeof effect.setEnabled === 'function') {
+                effect.setEnabled(!!value);
+            }
         }
     }
 
@@ -582,6 +648,7 @@ class SimpleParallax {
     async init() {
         // Load configuration first (with default image path)
         await this.loadConfig();
+        await this.loadFlags();
         this.updateInputModeFromViewport();
         
         // Initialize Three.js
@@ -951,8 +1018,9 @@ class SimpleParallax {
     }
 
     updateAutoMovement() {
-        // Skip auto-movement if locked or disabled
+        // Skip auto-movement if locked or disabled (config or flags)
         if (!this.autoMovementEnabled || this.isLocked) return;
+        if (!this.getFlag('parallax.autoMovement')) return;
         
         const currentTime = Date.now();
         const timeSinceLastMove = currentTime - this.lastMouseMoveTime;
@@ -988,9 +1056,9 @@ class SimpleParallax {
         // Update auto-movement
         this.updateAutoMovement();
 
-        // Handle input based on device type and available methods
-        if (!this.isLocked) {
-            if (this.isMobile && this.useOrientation && this.orientationSupported) {
+        // Handle input based on device type and available methods (gated by parallax.movement flag)
+        if (!this.isLocked && this.getFlag('parallax.movement')) {
+            if (this.isMobile && this.useOrientation && this.orientationSupported && this.getFlag('parallax.tiltControls')) {
                 // Use device orientation for mobile - apply same sensitivity system as mouse
                 const mouseSensitivityFocusFactor = this.mouseSensitivityFocusFactor.min + 
                     (this.mouseSensitivityFocusFactor.max - this.mouseSensitivityFocusFactor.min) * 2 * this.focus;

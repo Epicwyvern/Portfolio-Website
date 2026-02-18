@@ -41,13 +41,21 @@ class EffectManager {
                     const effectModule = await import(effectPath);
                     
                     if (effectModule.default) {
+                        const effectName = effectFile.replace('.js', '');
                         const effectInstance = new effectModule.default(this.scene, this.camera, this.renderer, this.parallax);
-                        await effectInstance.init();
+                        effectInstance.effectName = effectName;
                         
-                        this.effects.set(effectFile.replace('.js', ''), effectInstance);
+                        const enabled = this.parallax.getFlag(`effects.${effectName}.enabled`);
+                        if (enabled) {
+                            await effectInstance.init();
+                        } else {
+                            effectInstance.enabled = false;
+                        }
+                        
+                        this.effects.set(effectName, effectInstance);
                         this.effectInstances.push(effectInstance);
                         
-                        console.log(`EffectManager: Successfully loaded effect: ${effectFile}`);
+                        console.log(`EffectManager: Successfully loaded effect: ${effectFile} (enabled: ${enabled})`);
                     } else {
                         console.warn(`EffectManager: Effect file ${effectFile} does not export a default class`);
                     }
@@ -89,9 +97,10 @@ class EffectManager {
             return;
         }
         
-        // Update all active effects
+        // Update all active effects (skip disabled)
         this.effectInstances.forEach((effect, index) => {
             try {
+                if (!effect.isEnabled || !effect.isEnabled()) return;
                 if (effect.update && typeof effect.update === 'function') {
                     effect.update(deltaTime);
                 }
@@ -125,6 +134,17 @@ class EffectManager {
     // Get a specific effect by name
     getEffect(name) {
         return this.effects.get(name);
+    }
+    
+    async setEffectEnabled(name, enabled) {
+        const effect = this.effects.get(name);
+        if (!effect) return;
+        if (typeof effect.setEnabled === 'function') {
+            await effect.setEnabled(!!enabled);
+        }
+        if (this.parallax && typeof this.parallax.setFlag === 'function') {
+            this.parallax.setFlag(`effects.${name}.enabled`, !!enabled);
+        }
     }
     
     // Check if effects are loaded

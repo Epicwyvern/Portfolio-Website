@@ -365,8 +365,9 @@ class WaterRippleEffect extends BaseEffect {
     updateMouseInteraction(deltaTime) {
         if (!this.uniforms || !this.parallax || !this.overlayMesh) return;
         
+        const wakeInteraction = this.parallax.getFlag('effects.water-ripple.wakeInteraction');
         const mouseConfig = this.getConfig().mouseInteraction || {};
-        if (mouseConfig.enabled === false) {
+        if (!wakeInteraction || mouseConfig.enabled === false) {
             this.uniforms.mouseEnabled.value = 0.0;
             this.rippleInstances = [];
             this.updateInstanceUniforms();

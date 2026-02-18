@@ -1,0 +1,42 @@
+{
+  "parallax": {
+    "movement": true,
+    "autoMovement": true,
+    "tiltControls": true
+  },
+  "effects": {
+    "lanterns": {
+      "enabled": true,
+      "individual": {
+        "Lan0": true,
+        "Lan1": true,
+        "Lan2": true,
+        "Lan3": true,
+        "Lan4": true,
+        "Lan5": true,
+        "Lan6": true,
+        "Lan7": true,
+        "Lan8": true,
+        "Lan9": true,
+        "Lan10": true,
+        "Lan11": true,
+        "Lan12": true,
+        "Lan13": true,
+        "Lan14": true,
+        "Lan15": true,
+        "Lan16": true,
+        "Lan17": true,
+        "Lan18": true,
+        "Lan19": true,
+        "Lan20": true,
+        "Lan21": true,
+        "Lan22": true,
+        "Lan23": true
+      }
+    },
+    "water-ripple": {
+      "enabled": true,
+      "wakeInteraction": true
+    }
+  }
+}

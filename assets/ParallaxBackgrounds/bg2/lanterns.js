@@ -49,6 +49,10 @@ class LanternEffect extends BaseEffect {
                 try {
                     // Merge with defaults
                     const config = { ...lanternConfig.defaults, ...lanternData };
+                    const lanternName = config.name;
+                    if (this.parallax && !this.parallax.getFlag(`effects.lanterns.individual.${lanternName}`)) {
+                        return; // Skip disabled individual lantern
+                    }
                     
                     // Config coordinates are image UV (0-1); same space as focal point
                     const configPos = new THREE.Vector3(
@@ -530,15 +534,6 @@ class LanternEffect extends BaseEffect {
             // Update existing particles
             system.particles.forEach(particle => {
                 particle.maxOpacity = intensity;
-            });
-        });
-    }
-    
-    // Method to enable/disable all lantern systems
-    setEnabled(enabled) {
-        this.lanternSystems.forEach(system => {
-            system.particles.forEach(particle => {
-                particle.mesh.visible = enabled;
             });
         });
     }
