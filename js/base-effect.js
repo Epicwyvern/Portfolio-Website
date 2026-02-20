@@ -29,7 +29,7 @@ class BaseEffect {
         /** @type {string} Effect name as registered in EffectManager (e.g. 'lanterns', 'water-ripple'). Set by EffectManager. */
         this.effectName = '';
         
-        /** @type {'point'|'area'} Effect type: 'point' for localized effects (e.g. lanterns), 'area' for mask-based overlays (e.g. water ripple). Default 'point'. */
+        /** @type {'point'|'area'|'screen'} Effect type: 'point' for localized effects (e.g. lanterns), 'area' for mask-based overlays (e.g. water ripple), 'screen' for viewport/camera-level overlays. Default 'point'. */
         this.effectType = 'point';
         
         log('BaseEffect: Base effect initialized');
@@ -66,6 +66,9 @@ class BaseEffect {
         // Clean up all meshes
         this.meshes.forEach((mesh, index) => {
             try {
+                if (mesh.userData?.resizeCleanup && typeof mesh.userData.resizeCleanup === 'function') {
+                    mesh.userData.resizeCleanup();
+                }
                 this.scene.remove(mesh);
                 if (mesh.geometry) {
                     mesh.geometry.dispose();
@@ -277,6 +280,85 @@ class BaseEffect {
         return mesh;
     }
     
+    /**
+     * Creates a full-screen overlay mesh for screen effects. The quad is placed in front of the camera,
+     * covers the viewport, and does not move with parallax. Use for water droplets, vignette, etc.
+     * @param {string} fragmentShader - GLSL fragment shader source (receives uv, resolution)
+     * @param {Object} effectUniforms - Effect-specific uniforms
+     * @param {Object} [options={}] - ShaderMaterial options + distanceFromCamera (default 0.5)
+     * @returns {THREE.Mesh} The created mesh; call updateScreenEffectViewport(mesh) on resize
+     */
+    createScreenEffectMesh(fragmentShader, effectUniforms, options = {}) {
+        log('BaseEffect: Creating screen effect overlay mesh');
+        const distanceFromCamera = options.distanceFromCamera ?? 0.5;
+        const fov = 45;
+        const fovRad = THREE.MathUtils.degToRad(fov);
+        const halfFov = fovRad / 2;
+        const aspect = this.camera.aspect;
+        const height = 2 * Math.tan(halfFov) * distanceFromCamera;
+        const width = height * aspect;
+        const geometry = new THREE.PlaneGeometry(1, 1);
+        const resolution = new THREE.Vector2(this.renderer.domElement.width, this.renderer.domElement.height);
+        const uniforms = {
+            uResolution: { value: resolution },
+            uTime: { value: 0 },
+            ...effectUniforms
+        };
+        const vertexShader = `
+            varying vec2 vUv;
+            void main() {
+                vUv = uv;
+                gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+            }
+        `;
+        const material = new THREE.ShaderMaterial({
+            vertexShader,
+            fragmentShader,
+            uniforms,
+            transparent: true,
+            depthTest: false,
+            depthWrite: false,
+            side: THREE.FrontSide,
+            ...options
+        });
+        const mesh = new THREE.Mesh(geometry, material);
+        mesh.position.set(0, 0, this.camera.position.z - distanceFromCamera);
+        mesh.scale.set(width, height, 1);
+        mesh.frustumCulled = false;
+        mesh.renderOrder = 9999;
+        mesh.userData.isScreenEffect = true;
+        mesh.userData.distanceFromCamera = distanceFromCamera;
+        const resizeHandler = () => this.updateScreenEffectViewport(mesh);
+        window.addEventListener('resize', resizeHandler);
+        mesh.userData.resizeCleanup = () => window.removeEventListener('resize', resizeHandler);
+        this.meshes.push(mesh);
+        this.materials.push(material);
+        this.scene.add(mesh);
+        log('BaseEffect: Screen effect mesh created');
+        return mesh;
+    }
+
+    /**
+     * Updates a screen effect mesh to match the current viewport. Call on resize or when camera aspect changes.
+     * @param {THREE.Mesh} mesh - The screen effect mesh from createScreenEffectMesh
+     */
+    updateScreenEffectViewport(mesh) {
+        if (!mesh || !mesh.userData.isScreenEffect) return;
+        const d = mesh.userData.distanceFromCamera ?? 0.5;
+        const fovRad = THREE.MathUtils.degToRad(45);
+        const halfFov = fovRad / 2;
+        const height = 2 * Math.tan(halfFov) * d;
+        const width = height * this.camera.aspect;
+        mesh.position.z = this.camera.position.z - d;
+        mesh.scale.set(width, height, 1);
+        if (mesh.material.uniforms?.uResolution?.value) {
+            mesh.material.uniforms.uResolution.value.set(
+                this.renderer.domElement.width,
+                this.renderer.domElement.height
+            );
+        }
+    }
+
     /**
      * Applies the current parallax mesh transform (position, scale) to the given mesh.
      * Call this from update() or from updatePositionsForMeshTransform(meshTransform) so the overlay stays aligned with the background.

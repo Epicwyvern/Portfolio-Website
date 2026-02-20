@@ -403,7 +403,7 @@
       },
       "splooshInteraction": {
         "enabled": true,
-        "strength": 30.0,
+        "strength": 70.0,
         "radius": 0.1,
         "frequency": 200.0,
         "speed": 0.08,
@@ -423,7 +423,7 @@
         },
         "spray": {
           "enabled": true,
-          "velocityThreshold": 0.4,
+          "velocityThreshold": 0.5,
           "count": [15, 30],
           "spawnInterval": 0.03,
           "trail": [0.7, 1.0],
@@ -434,6 +434,21 @@
           "scale": [0.01, 0.035],
           "opacity": 0.4
         }
+      }
+    },
+    "screenVignette": {
+      "strength": 1,
+      "color": "0x000000",
+      "inner": 0.65,
+      "outer": 1.4,
+      "roundness": 0,
+      "horizontal": 1.0,
+      "vertical": 1.0,
+      "glowColor": "0xffdd66",
+      "glowStrengthMax": 0.25,
+      "lanternProximity": {
+        "enabled": true,
+        "radius": 0.05
       }
     }
   }
