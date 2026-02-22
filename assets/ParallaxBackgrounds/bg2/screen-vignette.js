@@ -21,9 +21,13 @@ const DEFAULT_FRAGMENT_SHADER = `
     uniform float uProximityBlend;
     uniform float uVignetteInner;
     uniform float uVignetteOuter;
+    uniform float uGlowInner;
+    uniform float uGlowOuter;
     uniform float uVignetteRoundness;
     uniform float uVignetteHorizontal;
     uniform float uVignetteVertical;
+    uniform float uFlickerSpeed;
+    uniform float uFlickerAmount;
 
     varying vec2 vUv;
 
@@ -36,11 +40,19 @@ const DEFAULT_FRAGMENT_SHADER = `
         ctAspect.x /= max(0.01, uVignetteHorizontal);
         ctAspect.y /= max(0.01, uVignetteVertical);
         float d = length(ctAspect);
-        float vignette = 1.0 - smoothstep(uVignetteInner, uVignetteOuter, d);
+        float innerVal = mix(uVignetteInner, uGlowInner, uProximityBlend);
+        float outerVal = mix(uVignetteOuter, uGlowOuter, uProximityBlend);
+        float vignette = 1.0 - smoothstep(innerVal, outerVal, d);
         float edge = 1.0 - vignette;
         float strength = mix(uVignetteStrength, uGlowStrength, uProximityBlend);
         vec3 col = mix(uVignetteColor, uGlowColor, uProximityBlend);
         float alpha = edge * strength;
+        float flicker = 1.0 + uFlickerAmount * (
+            sin(uTime * uFlickerSpeed) * 0.5 +
+            sin(uTime * uFlickerSpeed * 1.7) * 0.3 +
+            sin(uTime * uFlickerSpeed * 2.3) * 0.2
+        );
+        alpha *= mix(1.0, flicker, uProximityBlend);
         gl_FragColor = vec4(col, alpha);
     }
 `;
@@ -62,18 +74,21 @@ class ScreenVignetteEffect extends BaseEffect {
         log('ScreenVignetteEffect: Initializing');
         const config = this.getConfig();
         this.applyConfig(config);
-        this.lanternPositionsUV = this.getLanternPositionsUV();
         const uniforms = {
             uVignetteStrength: { value: this.vignetteStrength },
             uVignetteColor: { value: this.vignetteColor },
             uVignetteInner: { value: this.vignetteInner },
             uVignetteOuter: { value: this.vignetteOuter },
+            uGlowInner: { value: this.glowInner },
+            uGlowOuter: { value: this.glowOuter },
             uVignetteRoundness: { value: this.vignetteRoundness },
             uVignetteHorizontal: { value: this.vignetteHorizontal },
             uVignetteVertical: { value: this.vignetteVertical },
             uGlowStrength: { value: this.glowStrengthMax },
             uGlowColor: { value: this.glowColor },
-            uProximityBlend: { value: 0 }
+            uProximityBlend: { value: 0 },
+            uFlickerSpeed: { value: this.flickerSpeed },
+            uFlickerAmount: { value: this.flickerAmount }
         };
         this.overlayMesh = this.createScreenEffectMesh(
             DEFAULT_FRAGMENT_SHADER,
@@ -81,20 +96,47 @@ class ScreenVignetteEffect extends BaseEffect {
             { distanceFromCamera: 0.5 }
         );
         this.setupMouseTracking();
+        this._refreshEnabledLanternConfigs();
+        this._unsubLanternChange = this.parallax?.onLanternIndividualChange?.(
+            () => this._refreshEnabledLanternConfigs()
+        );
         this.isInitialized = true;
-        log(`ScreenVignetteEffect: Initialized with ${this.lanternPositionsUV.length} lanterns for proximity`);
+        log(`ScreenVignetteEffect: Initialized with ${this._enabledLanternConfigs.length} lanterns for proximity`);
+    }
+
+    _refreshEnabledLanternConfigs() {
+        this._enabledLanternConfigs = [];
+        const cfg = this.parallax?.config?.effects?.lanterns;
+        if (!this.parallax || !cfg?.lanterns) return;
+        for (const l of cfg.lanterns) {
+            const name = l.name;
+            if (this.parallax.getFlag(`effects.lanterns.individual.${name}`) === false) continue;
+            const x = l.position?.x ?? 0.5;
+            const y = l.position?.y ?? 0.5;
+            const z = l.position?.z ?? 0.5;
+            this._enabledLanternConfigs.push({ x, y, z });
+        }
     }
 
     getLanternPositionsUV() {
-        const lanternConfig = this.parallax?.config?.effects?.lanterns;
-        if (!lanternConfig?.lanterns || !Array.isArray(lanternConfig.lanterns)) return [];
+        const configs = this._enabledLanternConfigs ?? [];
+        return configs.map(c => ({ x: c.x, y: c.y }));
+    }
+
+    /**
+     * Returns lantern world positions for screen-space proximity. Uses cached enabled configs + mesh transform.
+     */
+    getLanternPositionsWorld() {
+        const t = this.parallax?.meshTransform;
+        const configs = this._enabledLanternConfigs ?? [];
+        if (!t || configs.length === 0) return [];
+        const mw = t.baseGeometrySize?.width * t.scale ?? 1;
+        const mh = t.baseGeometrySize?.height * t.scale ?? 1;
         const positions = [];
-        for (const l of lanternConfig.lanterns) {
-            const name = l.name;
-            if (this.parallax && !this.parallax.getFlag(`effects.lanterns.individual.${name}`)) continue;
-            const x = l.position?.x ?? 0.5;
-            const y = l.position?.y ?? 0.5;
-            positions.push({ x, y });
+        for (const c of configs) {
+            const wx = (c.x - 0.5) * mw + t.position.x;
+            const wy = (c.y - 0.5) * mh + t.position.y;
+            positions.push(new THREE.Vector3(wx, wy, c.z));
         }
         return positions;
     }
@@ -138,25 +180,42 @@ class ScreenVignetteEffect extends BaseEffect {
         const h = t.baseGeometrySize?.height ?? 1;
         const localX = (this._tmpIntersect.x - t.position.x) / scale;
         const localY = (this._tmpIntersect.y - t.position.y) / scale;
-        const u = localX / w + 0.5;
-        const v = localY / h + 0.5;
+        let u = localX / w + 0.5;
+        let v = localY / h + 0.5;
+        const offset = this.uvOffset ?? { u: 0, v: 0 };
+        u += offset.u ?? 0;
+        v += offset.v ?? 0;
         return new THREE.Vector2(u, v);
     }
 
-    computeProximity(mouseUV) {
+    /**
+     * Screen-space proximity: project lantern world positions to pixels, compare to mouse.
+     * Fixes depth/position offset (lanterns at different z or x,y appear correctly).
+     */
+    computeProximityScreenSpace(mousePixelX, mousePixelY) {
         const cfg = this.getConfig().lanternProximity ?? {};
-        const radius = cfg.radius ?? 0.08;
         const enabled = cfg.enabled !== false;
-        if (!enabled || this.lanternPositionsUV.length === 0) return 0;
-        let minDist = 1e6;
-        for (const p of this.lanternPositionsUV) {
-            const dx = mouseUV.x - p.x;
-            const dy = mouseUV.y - p.y;
+        if (!enabled || !this.camera) return 0;
+        const worldPositions = this.getLanternPositionsWorld();
+        if (worldPositions.length === 0) return 0;
+        const canvas = this.parallax?.canvas;
+        if (!canvas) return 0;
+        const rect = canvas.getBoundingClientRect();
+        const radiusPixels = (cfg.radiusPixels != null ? cfg.radiusPixels : null)
+            ?? (cfg.radius ?? 0.08) * Math.min(rect.width, rect.height);
+        const _proj = this._projVec ?? (this._projVec = new THREE.Vector3());
+        let minDistPx = 1e9;
+        for (const w of worldPositions) {
+            _proj.copy(w).project(this.camera);
+            const px = (_proj.x * 0.5 + 0.5) * rect.width;
+            const py = (0.5 - _proj.y * 0.5) * rect.height;
+            const dx = mousePixelX - px;
+            const dy = mousePixelY - py;
             const d = Math.sqrt(dx * dx + dy * dy);
-            if (d < minDist) minDist = d;
+            if (d < minDistPx) minDistPx = d;
         }
-        if (minDist > radius) return 0;
-        const t = 1 - minDist / radius;
+        if (minDistPx > radiusPixels) return 0;
+        const t = 1 - minDistPx / radiusPixels;
         const v = Math.max(0, Math.min(1, t));
         return v * v * (3 - 2 * v);
     }
@@ -166,11 +225,16 @@ class ScreenVignetteEffect extends BaseEffect {
         this.vignetteColor = this.parseColor(config.color ?? '0x000000');
         this.vignetteInner = config.inner ?? 0.25;
         this.vignetteOuter = config.outer ?? 1.2;
+        this.glowInner = config.glowInner ?? 0.85;
+        this.glowOuter = config.glowOuter ?? 1.4;
         this.vignetteRoundness = config.roundness ?? 1.0;
         this.vignetteHorizontal = config.horizontal ?? 1.0;
         this.vignetteVertical = config.vertical ?? 1.0;
         this.glowColor = this.parseColor(config.glowColor ?? '0xffdd66');
         this.glowStrengthMax = config.glowStrengthMax ?? 0.25;
+        this.uvOffset = config.uvOffset ?? { u: 0, v: 0 };
+        this.flickerSpeed = config.flickerSpeed ?? 8;
+        this.flickerAmount = config.flickerAmount ?? 0.35;
     }
 
     getConfig() {
@@ -203,14 +267,8 @@ class ScreenVignetteEffect extends BaseEffect {
                 py = rect.height * 0.5;
             }
         }
-        const mouseUV = this.getUVAtPixel(px, py);
-        if (mouseUV && mouseUV.x >= 0 && mouseUV.x <= 1 && mouseUV.y >= 0 && mouseUV.y <= 1) {
-            this.lastMouseUV.copy(mouseUV);
-            const blend = this.computeProximity(mouseUV);
-            this.proximityBlend += (blend - this.proximityBlend) * 0.12;
-        } else {
-            this.proximityBlend += (0 - this.proximityBlend) * 0.08;
-        }
+        const blend = this.computeProximityScreenSpace(px, py);
+        this.proximityBlend += (blend - this.proximityBlend) * 0.12;
         u.uProximityBlend.value = this.proximityBlend;
     }
 
@@ -218,19 +276,26 @@ class ScreenVignetteEffect extends BaseEffect {
         if (!this.overlayMesh?.material?.uniforms) return;
         const c = config ?? this.getConfig();
         this.applyConfig(c);
-        this.lanternPositionsUV = this.getLanternPositionsUV();
         const u = this.overlayMesh.material.uniforms;
         u.uVignetteStrength.value = this.vignetteStrength;
         u.uVignetteColor.value.copy(this.vignetteColor);
         u.uVignetteInner.value = this.vignetteInner;
         u.uVignetteOuter.value = this.vignetteOuter;
+        if (u.uGlowInner) u.uGlowInner.value = this.glowInner;
+        if (u.uGlowOuter) u.uGlowOuter.value = this.glowOuter;
         u.uVignetteRoundness.value = this.vignetteRoundness;
         u.uVignetteHorizontal.value = this.vignetteHorizontal;
         u.uVignetteVertical.value = this.vignetteVertical;
         u.uGlowColor.value.copy(this.glowColor);
+        if (u.uFlickerSpeed) u.uFlickerSpeed.value = this.flickerSpeed;
+        if (u.uFlickerAmount) u.uFlickerAmount.value = this.flickerAmount;
     }
 
     cleanup() {
+        if (typeof this._unsubLanternChange === 'function') {
+            this._unsubLanternChange();
+            this._unsubLanternChange = null;
+        }
         const canvas = this.parallax?.canvas;
         if (canvas && this._mouseHandler) {
             canvas.removeEventListener('mousemove', this._mouseHandler);

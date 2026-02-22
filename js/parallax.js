@@ -372,6 +372,23 @@ class SimpleParallax {
                 effect.setEnabled(!!value);
             }
         }
+        // Side effect: if toggling individual lantern, notify listeners (no per-frame checks)
+        if (path.startsWith('effects.lanterns.individual.')) {
+            const cbs = this._lanternIndividualChangeCallbacks;
+            if (cbs && cbs.length) {
+                cbs.forEach(fn => { try { fn(); } catch (e) { console.warn('Lantern change callback error:', e); } });
+            }
+        }
+    }
+
+    /** Register callback for individual lantern enable/disable. Call on toggle only, not per frame. */
+    onLanternIndividualChange(callback) {
+        if (!this._lanternIndividualChangeCallbacks) this._lanternIndividualChangeCallbacks = [];
+        this._lanternIndividualChangeCallbacks.push(callback);
+        return () => {
+            const i = this._lanternIndividualChangeCallbacks.indexOf(callback);
+            if (i >= 0) this._lanternIndividualChangeCallbacks.splice(i, 1);
+        };
     }
 
     detectMobileDevice() {

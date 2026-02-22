@@ -49,12 +49,9 @@ class LanternEffect extends BaseEffect {
             this.lanternSystems = [];
             lanternConfig.lanterns.forEach((lanternData, index) => {
                 try {
-                    // Merge with defaults
+                    // Merge with defaults - create all systems; runtime flag controls visibility
                     const config = { ...lanternConfig.defaults, ...lanternData };
                     const lanternName = config.name;
-                    if (this.parallax && !this.parallax.getFlag(`effects.lanterns.individual.${lanternName}`)) {
-                        return; // Skip disabled individual lantern
-                    }
                     
                     // Config coordinates are image UV (0-1); same space as focal point
                     const configPos = new THREE.Vector3(
@@ -90,6 +87,11 @@ class LanternEffect extends BaseEffect {
                 }
             });
             
+            this._refreshDisabledLanterns();
+            this._unsubLanternChange = this.parallax?.onLanternIndividualChange?.(
+                () => this._refreshDisabledLanterns()
+            );
+            
             // Initialize animation properties
             this.time = 0;
             this.isInitialized = true;
@@ -120,6 +122,18 @@ class LanternEffect extends BaseEffect {
         // Update each lantern system
         this.lanternSystems.forEach((system, systemIndex) => {
             try {
+                if (this._disabledLanterns?.has(system.name)) {
+                    if (system.particles.length > 0) {
+                        system.particles.forEach((p) => {
+                            if (p.gsapAnimation) { p.gsapAnimation.kill(); p.gsapAnimation = null; }
+                            this.scene.remove(p.mesh);
+                            p.mesh.geometry.dispose();
+                            p.mesh.material.dispose();
+                        });
+                        system.particles.length = 0;
+                    }
+                    return;
+                }
                 // Check if we need to spawn a new particle
                 if (this.time >= system.nextParticleTime && system.particles.length < system.config.count) {
                     this.spawnParticle(system);
@@ -161,6 +175,18 @@ class LanternEffect extends BaseEffect {
                 console.error(`LanternEffect: Error updating lantern system ${systemIndex}:`, error);
             }
         });
+    }
+    
+    _refreshDisabledLanterns() {
+        this._disabledLanterns = new Set();
+        const cfg = this.parallax?.config?.effects?.lanterns;
+        if (!this.parallax || !cfg?.lanterns) return;
+        for (const l of cfg.lanterns) {
+            const name = l.name;
+            if (this.parallax.getFlag(`effects.lanterns.individual.${name}`) === false) {
+                this._disabledLanterns.add(name);
+            }
+        }
     }
     
     spawnParticle(system) {
@@ -562,6 +588,10 @@ class LanternEffect extends BaseEffect {
             this.lanternSystems = [];
         }
         
+        if (typeof this._unsubLanternChange === 'function') {
+            this._unsubLanternChange();
+            this._unsubLanternChange = null;
+        }
         // Don't clear fullLanternConfig or flareTexture - keep them for re-init
         // Reset time to prevent stale state
         this.time = 0;

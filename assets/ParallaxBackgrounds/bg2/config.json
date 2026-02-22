@@ -403,7 +403,7 @@
       },
       "splooshInteraction": {
         "enabled": true,
-        "strength": 70.0,
+        "strength": 50.0,
         "radius": 0.1,
         "frequency": 200.0,
         "speed": 0.08,
@@ -441,14 +441,19 @@
       "color": "0x000000",
       "inner": 0.65,
       "outer": 1.4,
+      "glowInner": 0.85,
+      "glowOuter": 1.4,
       "roundness": 0,
       "horizontal": 1.0,
       "vertical": 1.0,
       "glowColor": "0xffdd66",
-      "glowStrengthMax": 0.25,
+      "glowStrengthMax": 0.15,
+      "uvOffset": { "u": 0, "v": 0},
+      "flickerSpeed": 5,
+      "flickerAmount": 0.7,
       "lanternProximity": {
         "enabled": true,
-        "radius": 0.05
+        "radius": 0.03
       }
     }
   }
