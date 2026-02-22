@@ -47,6 +47,7 @@
   "effects": {
     "lanterns": {
       "clickToToggle": true,
+      "glowFadeInDuration": 2,
       "defaults": {
         "scale": 1.0,
         "opacity": 0.8,
@@ -454,12 +455,8 @@
       "flickerAmount": 0.7,
       "lanternProximity": {
         "enabled": true,
-        "radius": 0.03,
-        "glowFadeInDuration": 2
+        "radius": 0.06
       }
-    },
-    "lanternGlow": {
-      "glowFadeInDuration": 2
     }
   }
 }

@@ -249,7 +249,7 @@ class ScreenVignetteEffect extends BaseEffect {
         this.vignetteVertical = config.vertical ?? 1.0;
         this.glowColor = this.parseColor(config.glowColor ?? '0xffdd66');
         this.glowStrengthMax = config.glowStrengthMax ?? 0.25;
-        this.glowFadeInDuration = config.lanternProximity?.glowFadeInDuration ?? 2;
+        this.glowFadeInDuration = this.parallax?.config?.effects?.lanterns?.glowFadeInDuration ?? 2;
         this.uvOffset = config.uvOffset ?? { u: 0, v: 0 };
         this.flickerSpeed = config.flickerSpeed ?? 8;
         this.flickerAmount = config.flickerAmount ?? 0.35;

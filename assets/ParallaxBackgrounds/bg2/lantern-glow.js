@@ -200,7 +200,7 @@ class LanternGlowEffect extends BaseEffect {
         this.radius = config.radius ?? 0.12;
         this.flickerSpeed = config.flickerSpeed ?? 8;
         this.flickerAmount = config.flickerAmount ?? 0.35;
-        this.glowFadeInDuration = config.glowFadeInDuration ?? 2;
+        this.glowFadeInDuration = this.parallax?.config?.effects?.lanterns?.glowFadeInDuration ?? 2;
     }
 
     getConfig() {
