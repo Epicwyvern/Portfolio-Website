@@ -92,6 +92,10 @@ class LanternEffect extends BaseEffect {
                 () => this._refreshDisabledLanterns()
             );
             
+            if (lanternConfig.clickToToggle !== false) {
+                this.setupClickToToggle();
+            }
+            
             // Initialize animation properties
             this.time = 0;
             this.isInitialized = true;
@@ -177,6 +181,71 @@ class LanternEffect extends BaseEffect {
         });
     }
     
+    _getClickRadius(system) {
+        const growth = system.config?.growthSpeed ?? 2.0;
+        const lifetime = system.config?.lifetime ?? 2.5;
+        const scale = system.config?.scale ?? 1.0;
+        const finalSize = growth * lifetime * scale;
+        const radius = finalSize * 8;
+        return Math.max(14, Math.min(60, radius));
+    }
+
+    _findLanternAtClientXY(clientX, clientY) {
+        const canvas = this.parallax?.canvas;
+        const camera = this.camera;
+        if (!canvas || !camera || !this.lanternSystems?.length) return null;
+        const rect = canvas.getBoundingClientRect();
+        const mouseX = clientX - rect.left;
+        const mouseY = clientY - rect.top;
+        const _proj = this._projVec ?? (this._projVec = new THREE.Vector3());
+        let closest = null;
+        let closestDist = Infinity;
+        for (const system of this.lanternSystems) {
+            if (!system?.originPosition) continue;
+            _proj.copy(system.originPosition).project(camera);
+            if (_proj.z < -1 || _proj.z > 1) continue;
+            const sx = (_proj.x * 0.5 + 0.5) * rect.width;
+            const sy = (0.5 - _proj.y * 0.5) * rect.height;
+            const radius = this._getClickRadius(system);
+            const dx = mouseX - sx;
+            const dy = mouseY - sy;
+            const d = Math.sqrt(dx * dx + dy * dy);
+            if (d <= radius && d < closestDist) {
+                closestDist = d;
+                closest = system;
+            }
+        }
+        return closest;
+    }
+
+    setupClickToToggle() {
+        const canvas = this.parallax?.canvas;
+        if (!canvas) return;
+        const handleClick = (e) => {
+            const system = this._findLanternAtClientXY(e.clientX, e.clientY);
+            if (system) {
+                const name = system.name;
+                const current = this.parallax.getFlag(`effects.lanterns.individual.${name}`);
+                this.parallax.setFlag(`effects.lanterns.individual.${name}`, !current);
+            }
+        };
+        const handleTouch = (e) => {
+            const t = (e.changedTouches && e.changedTouches[0]) || (e.touches && e.touches[0]);
+            if (!t) return;
+            const system = this._findLanternAtClientXY(t.clientX, t.clientY);
+            if (system) {
+                e.preventDefault();
+                const name = system.name;
+                const current = this.parallax.getFlag(`effects.lanterns.individual.${name}`);
+                this.parallax.setFlag(`effects.lanterns.individual.${name}`, !current);
+            }
+        };
+        canvas.addEventListener('click', handleClick);
+        canvas.addEventListener('touchend', handleTouch, { passive: false });
+        this._clickHandler = handleClick;
+        this._touchHandler = handleTouch;
+    }
+
     _refreshDisabledLanterns() {
         this._disabledLanterns = new Set();
         const cfg = this.parallax?.config?.effects?.lanterns;
@@ -591,6 +660,15 @@ class LanternEffect extends BaseEffect {
         if (typeof this._unsubLanternChange === 'function') {
             this._unsubLanternChange();
             this._unsubLanternChange = null;
+        }
+        const canvas = this.parallax?.canvas;
+        if (canvas && this._clickHandler) {
+            canvas.removeEventListener('click', this._clickHandler);
+            this._clickHandler = null;
+        }
+        if (canvas && this._touchHandler) {
+            canvas.removeEventListener('touchend', this._touchHandler);
+            this._touchHandler = null;
         }
         // Don't clear fullLanternConfig or flareTexture - keep them for re-init
         // Reset time to prevent stale state

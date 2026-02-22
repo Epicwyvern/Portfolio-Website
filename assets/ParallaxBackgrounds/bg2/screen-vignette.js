@@ -96,10 +96,12 @@ class ScreenVignetteEffect extends BaseEffect {
             { distanceFromCamera: 0.5 }
         );
         this.setupMouseTracking();
+        this._lanternEnabledAt = {};
         this._refreshEnabledLanternConfigs();
-        this._unsubLanternChange = this.parallax?.onLanternIndividualChange?.(
-            () => this._refreshEnabledLanternConfigs()
-        );
+        this._unsubLanternChange = this.parallax?.onLanternIndividualChange?.((name, isNowEnabled) => {
+            if (isNowEnabled) this._lanternEnabledAt[name] = (performance.now() / 1000);
+            this._refreshEnabledLanternConfigs();
+        });
         this.isInitialized = true;
         log(`ScreenVignetteEffect: Initialized with ${this._enabledLanternConfigs.length} lanterns for proximity`);
     }
@@ -114,13 +116,22 @@ class ScreenVignetteEffect extends BaseEffect {
             const x = l.position?.x ?? 0.5;
             const y = l.position?.y ?? 0.5;
             const z = l.position?.z ?? 0.5;
-            this._enabledLanternConfigs.push({ x, y, z });
+            this._enabledLanternConfigs.push({ name, x, y, z });
         }
     }
 
     getLanternPositionsUV() {
         const configs = this._enabledLanternConfigs ?? [];
         return configs.map(c => ({ x: c.x, y: c.y }));
+    }
+
+    _getLanternFadeFactor(name) {
+        const dur = this.glowFadeInDuration ?? 0;
+        if (dur <= 0) return 1;
+        const at = this._lanternEnabledAt?.[name];
+        if (at == null) return 1;
+        const elapsed = (performance.now() / 1000) - at;
+        return Math.min(1, elapsed / dur);
     }
 
     /**
@@ -196,28 +207,34 @@ class ScreenVignetteEffect extends BaseEffect {
         const cfg = this.getConfig().lanternProximity ?? {};
         const enabled = cfg.enabled !== false;
         if (!enabled || !this.camera) return 0;
+        const configs = this._enabledLanternConfigs ?? [];
         const worldPositions = this.getLanternPositionsWorld();
-        if (worldPositions.length === 0) return 0;
+        if (configs.length === 0 || worldPositions.length === 0) return 0;
         const canvas = this.parallax?.canvas;
         if (!canvas) return 0;
         const rect = canvas.getBoundingClientRect();
         const radiusPixels = (cfg.radiusPixels != null ? cfg.radiusPixels : null)
             ?? (cfg.radius ?? 0.08) * Math.min(rect.width, rect.height);
         const _proj = this._projVec ?? (this._projVec = new THREE.Vector3());
-        let minDistPx = 1e9;
-        for (const w of worldPositions) {
+        let maxContrib = 0;
+        for (let i = 0; i < worldPositions.length; i++) {
+            const w = worldPositions[i];
+            const c = configs[i];
+            const fade = this._getLanternFadeFactor(c?.name);
+            if (fade <= 0) continue;
             _proj.copy(w).project(this.camera);
             const px = (_proj.x * 0.5 + 0.5) * rect.width;
             const py = (0.5 - _proj.y * 0.5) * rect.height;
             const dx = mousePixelX - px;
             const dy = mousePixelY - py;
             const d = Math.sqrt(dx * dx + dy * dy);
-            if (d < minDistPx) minDistPx = d;
+            if (d > radiusPixels) continue;
+            const t = 1 - d / radiusPixels;
+            const v = Math.max(0, Math.min(1, t));
+            const contrib = v * v * (3 - 2 * v) * fade;
+            if (contrib > maxContrib) maxContrib = contrib;
         }
-        if (minDistPx > radiusPixels) return 0;
-        const t = 1 - minDistPx / radiusPixels;
-        const v = Math.max(0, Math.min(1, t));
-        return v * v * (3 - 2 * v);
+        return maxContrib;
     }
 
     applyConfig(config) {
@@ -232,6 +249,7 @@ class ScreenVignetteEffect extends BaseEffect {
         this.vignetteVertical = config.vertical ?? 1.0;
         this.glowColor = this.parseColor(config.glowColor ?? '0xffdd66');
         this.glowStrengthMax = config.glowStrengthMax ?? 0.25;
+        this.glowFadeInDuration = config.lanternProximity?.glowFadeInDuration ?? 2;
         this.uvOffset = config.uvOffset ?? { u: 0, v: 0 };
         this.flickerSpeed = config.flickerSpeed ?? 8;
         this.flickerAmount = config.flickerAmount ?? 0.35;

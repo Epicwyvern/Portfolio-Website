@@ -37,6 +37,22 @@ const DEFAULT_FRAGMENT_SHADER = `
     uniform vec2 uLanternPos13;
     uniform vec2 uLanternPos14;
     uniform vec2 uLanternPos15;
+    uniform float uLanternFade0;
+    uniform float uLanternFade1;
+    uniform float uLanternFade2;
+    uniform float uLanternFade3;
+    uniform float uLanternFade4;
+    uniform float uLanternFade5;
+    uniform float uLanternFade6;
+    uniform float uLanternFade7;
+    uniform float uLanternFade8;
+    uniform float uLanternFade9;
+    uniform float uLanternFade10;
+    uniform float uLanternFade11;
+    uniform float uLanternFade12;
+    uniform float uLanternFade13;
+    uniform float uLanternFade14;
+    uniform float uLanternFade15;
 
     varying vec2 vUv;
 
@@ -61,8 +77,26 @@ const DEFAULT_FRAGMENT_SHADER = `
             else if (i == 13) pos = uLanternPos13;
             else if (i == 14) pos = uLanternPos14;
             else pos = uLanternPos15;
+            float fade;
+            if (i == 0) fade = uLanternFade0;
+            else if (i == 1) fade = uLanternFade1;
+            else if (i == 2) fade = uLanternFade2;
+            else if (i == 3) fade = uLanternFade3;
+            else if (i == 4) fade = uLanternFade4;
+            else if (i == 5) fade = uLanternFade5;
+            else if (i == 6) fade = uLanternFade6;
+            else if (i == 7) fade = uLanternFade7;
+            else if (i == 8) fade = uLanternFade8;
+            else if (i == 9) fade = uLanternFade9;
+            else if (i == 10) fade = uLanternFade10;
+            else if (i == 11) fade = uLanternFade11;
+            else if (i == 12) fade = uLanternFade12;
+            else if (i == 13) fade = uLanternFade13;
+            else if (i == 14) fade = uLanternFade14;
+            else fade = uLanternFade15;
             float d = length(vUv - pos);
-            minDist = min(minDist, d);
+            float dEff = d + (1.0 - fade) * 10.0;
+            minDist = min(minDist, dEff);
         }
         if (minDist >= uRadius) discard;
 
@@ -90,10 +124,12 @@ class LanternGlowEffect extends BaseEffect {
         log('LanternGlowEffect: Initializing');
         const config = this.getConfig();
         this.applyConfig(config);
+        this._lanternEnabledAt = {};
         this._refreshEnabledLanternConfigs();
-        this._unsubLanternChange = this.parallax?.onLanternIndividualChange?.(
-            () => this._refreshEnabledLanternConfigs()
-        );
+        this._unsubLanternChange = this.parallax?.onLanternIndividualChange?.((name, isNowEnabled) => {
+            if (isNowEnabled) this._lanternEnabledAt[name] = (performance.now() / 1000);
+            this._refreshEnabledLanternConfigs();
+        });
         const positions = this._enabledLanternConfigs ?? [];
         if (positions.length === 0) {
             log('LanternGlowEffect: No lanterns enabled, skipping overlay');
@@ -127,9 +163,18 @@ class LanternGlowEffect extends BaseEffect {
             if (this.parallax.getFlag(`effects.lanterns.individual.${name}`) === false) continue;
             const x = l.position?.x ?? 0.5;
             const y = l.position?.y ?? 0.5;
-            this._enabledLanternConfigs.push({ x, y });
+            this._enabledLanternConfigs.push({ name, x, y });
             if (this._enabledLanternConfigs.length >= MAX_LANTERNS) break;
         }
+    }
+
+    _getLanternFadeFactor(name) {
+        const dur = this.glowFadeInDuration ?? 0;
+        if (dur <= 0) return 1;
+        const at = this._lanternEnabledAt?.[name];
+        if (at == null) return 1;
+        const elapsed = (performance.now() / 1000) - at;
+        return Math.min(1, elapsed / dur);
     }
 
     buildUniforms() {
@@ -144,6 +189,7 @@ class LanternGlowEffect extends BaseEffect {
         };
         for (let i = 0; i < MAX_LANTERNS; i++) {
             u[`uLanternPos${i}`] = { value: new THREE.Vector2(-10, -10) };
+            u[`uLanternFade${i}`] = { value: 1 };
         }
         return u;
     }
@@ -154,6 +200,7 @@ class LanternGlowEffect extends BaseEffect {
         this.radius = config.radius ?? 0.12;
         this.flickerSpeed = config.flickerSpeed ?? 8;
         this.flickerAmount = config.flickerAmount ?? 0.35;
+        this.glowFadeInDuration = config.glowFadeInDuration ?? 2;
     }
 
     getConfig() {
@@ -176,12 +223,15 @@ class LanternGlowEffect extends BaseEffect {
         const count = Math.min(positions.length, MAX_LANTERNS);
         this.uniforms.uLanternCount.value = count;
         for (let i = 0; i < MAX_LANTERNS; i++) {
-            const u = this.uniforms[`uLanternPos${i}`];
+            const uPos = this.uniforms[`uLanternPos${i}`];
+            const uFade = this.uniforms[`uLanternFade${i}`];
             if (i < count) {
                 const p = positions[i];
-                u.value.set(p.x, p.y);
+                uPos.value.set(p.x, p.y);
+                uFade.value = this._getLanternFadeFactor(p.name);
             } else {
-                u.value.set(-10, -10);
+                uPos.value.set(-10, -10);
+                uFade.value = 0;
             }
         }
         this.syncWithParallaxMesh(this.overlayMesh);

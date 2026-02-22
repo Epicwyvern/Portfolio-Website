@@ -374,14 +374,15 @@ class SimpleParallax {
         }
         // Side effect: if toggling individual lantern, notify listeners (no per-frame checks)
         if (path.startsWith('effects.lanterns.individual.')) {
+            const name = keys[keys.length - 1];
             const cbs = this._lanternIndividualChangeCallbacks;
             if (cbs && cbs.length) {
-                cbs.forEach(fn => { try { fn(); } catch (e) { console.warn('Lantern change callback error:', e); } });
+                cbs.forEach(fn => { try { fn(name, !!value); } catch (e) { console.warn('Lantern change callback error:', e); } });
             }
         }
     }
 
-    /** Register callback for individual lantern enable/disable. Call on toggle only, not per frame. */
+    /** Register callback for individual lantern enable/disable. Callback receives (lanternName, isNowEnabled). */
     onLanternIndividualChange(callback) {
         if (!this._lanternIndividualChangeCallbacks) this._lanternIndividualChangeCallbacks = [];
         this._lanternIndividualChangeCallbacks.push(callback);
