@@ -571,6 +571,10 @@ class WaterRippleEffect extends BaseEffect {
         return this._cachedRect;
     }
 
+    _invalidateRectCache() {
+        this._cachedRectFrame = -1;
+    }
+
     update(deltaTime) {
         if (!this.isInitialized || !this.overlayMesh) return;
 
@@ -1072,11 +1076,20 @@ class WaterRippleEffect extends BaseEffect {
         if (this._touchStartHandler) {
             this.parallax.canvas.removeEventListener('touchstart', this._touchStartHandler);
         }
+        if (this._resizeHandler) {
+            window.removeEventListener('resize', this._resizeHandler);
+            this._resizeHandler = null;
+        }
+        if (this._scrollHandler) {
+            window.removeEventListener('scroll', this._scrollHandler);
+            this._scrollHandler = null;
+        }
         
         const canvas = this.parallax.canvas;
         
         const handleMouseMove = (event) => {
-            const rect = canvas.getBoundingClientRect();
+            const rect = this._getCanvasRect();
+            if (!rect) return;
             this.mousePixelX = event.clientX - rect.left;
             this.mousePixelY = event.clientY - rect.top;
             this.isTouching = false;
@@ -1085,7 +1098,8 @@ class WaterRippleEffect extends BaseEffect {
         const handleTouchMove = (event) => {
             event.preventDefault(); // Prevent scrolling
             if (event.touches.length > 0) {
-                const rect = canvas.getBoundingClientRect();
+                const rect = this._getCanvasRect();
+                if (!rect) return;
                 this.mousePixelX = event.touches[0].clientX - rect.left;
                 this.mousePixelY = event.touches[0].clientY - rect.top;
                 this.isTouching = true;
@@ -1097,7 +1111,8 @@ class WaterRippleEffect extends BaseEffect {
         };
         
         const handleClick = (event) => {
-            const rect = canvas.getBoundingClientRect();
+            const rect = this._getCanvasRect();
+            if (!rect) return;
             const px = event.clientX - rect.left;
             const py = event.clientY - rect.top;
             this.handleSploosh(px, py);
@@ -1105,7 +1120,8 @@ class WaterRippleEffect extends BaseEffect {
         
         const handleTouchStart = (event) => {
             if (event.touches.length > 0) {
-                const rect = canvas.getBoundingClientRect();
+                const rect = this._getCanvasRect();
+                if (!rect) return;
                 const px = event.touches[0].clientX - rect.left;
                 const py = event.touches[0].clientY - rect.top;
                 this.handleSploosh(px, py);
@@ -1118,6 +1134,10 @@ class WaterRippleEffect extends BaseEffect {
         canvas.addEventListener('touchcancel', handleTouchEnd);
         canvas.addEventListener('click', handleClick);
         canvas.addEventListener('touchstart', handleTouchStart, { passive: true });
+        this._resizeHandler = () => this._invalidateRectCache();
+        this._scrollHandler = () => this._invalidateRectCache();
+        window.addEventListener('resize', this._resizeHandler);
+        window.addEventListener('scroll', this._scrollHandler, { passive: true });
         
         // Store cleanup functions
         this._mouseMoveHandler = handleMouseMove;
@@ -1225,6 +1245,14 @@ class WaterRippleEffect extends BaseEffect {
                 this.parallax.canvas.removeEventListener('touchstart', this._touchStartHandler);
                 this._touchStartHandler = null;
             }
+        }
+        if (this._resizeHandler) {
+            window.removeEventListener('resize', this._resizeHandler);
+            this._resizeHandler = null;
+        }
+        if (this._scrollHandler) {
+            window.removeEventListener('scroll', this._scrollHandler);
+            this._scrollHandler = null;
         }
         
         this.overlayMesh = null;

@@ -5,6 +5,8 @@
 import BaseEffect from '../../../js/base-effect.js';
 import * as THREE from 'https://unpkg.com/three@0.172.0/build/three.module.js';
 
+const MAX_DIRECTIONAL_GLOWS = 8;
+
 const log = (...args) => {
     if (window.location.pathname.endsWith('test-effects.html')) {
         console.log(...args);
@@ -12,13 +14,15 @@ const log = (...args) => {
 };
 
 const DEFAULT_FRAGMENT_SHADER = `
+    const int MAX_DIRECTIONAL_GLOWS = ${MAX_DIRECTIONAL_GLOWS};
+
     uniform vec2 uResolution;
     uniform float uTime;
     uniform float uVignetteStrength;
     uniform vec3 uVignetteColor;
     uniform float uGlowStrength;
     uniform vec3 uGlowColor;
-    uniform float uProximityBlend;
+    uniform float uInnerBlend;
     uniform float uVignetteInner;
     uniform float uVignetteOuter;
     uniform float uGlowInner;
@@ -28,8 +32,44 @@ const DEFAULT_FRAGMENT_SHADER = `
     uniform float uVignetteVertical;
     uniform float uFlickerSpeed;
     uniform float uFlickerAmount;
+    uniform int uDirectionalGlowCount;
+    uniform vec4 uDirectionalGlowData[MAX_DIRECTIONAL_GLOWS]; // x, y, strength, size
+    uniform float uInnerFogStrength;
+    uniform float uInnerRimStrength;
+    uniform float uInnerRimThickness;
+    uniform float uFogNoiseScale;
+    uniform float uFogWarpAmount;
+    uniform float uFogDriftSpeed;
+    uniform float uFogDriftX;
+    uniform float uFogDriftY;
 
     varying vec2 vUv;
+
+    float hash12(vec2 p) {
+        vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+        p3 += dot(p3, p3.yzx + 33.33);
+        return fract((p3.x + p3.y) * p3.z);
+    }
+
+    float noise2d(vec2 p) {
+        vec2 i = floor(p);
+        vec2 f = fract(p);
+        vec2 u = f * f * (3.0 - 2.0 * f);
+        float a = hash12(i + vec2(0.0, 0.0));
+        float b = hash12(i + vec2(1.0, 0.0));
+        float c = hash12(i + vec2(0.0, 1.0));
+        float dN = hash12(i + vec2(1.0, 1.0));
+        return mix(mix(a, b, u.x), mix(c, dN, u.x), u.y);
+    }
+
+    float fbm(vec2 p) {
+        float value = 0.0;
+        float amp = 0.5;
+        value += amp * noise2d(p); p *= 2.07; amp *= 0.5;
+        value += amp * noise2d(p); p *= 2.03; amp *= 0.5;
+        value += amp * noise2d(p);
+        return value;
+    }
 
     void main() {
         vec2 uv = vUv;
@@ -40,20 +80,95 @@ const DEFAULT_FRAGMENT_SHADER = `
         ctAspect.x /= max(0.01, uVignetteHorizontal);
         ctAspect.y /= max(0.01, uVignetteVertical);
         float d = length(ctAspect);
-        float innerVal = mix(uVignetteInner, uGlowInner, uProximityBlend);
-        float outerVal = mix(uVignetteOuter, uGlowOuter, uProximityBlend);
-        float vignette = 1.0 - smoothstep(innerVal, outerVal, d);
+
+        vec2 fogDrift = vec2(uFogDriftX, uFogDriftY);
+        float driftLen = length(fogDrift);
+        if (driftLen < 0.001) {
+            fogDrift = vec2(1.0, 0.35);
+            driftLen = length(fogDrift);
+        }
+        fogDrift /= driftLen;
+        vec2 baseNoiseCoord = uv * max(0.1, uFogNoiseScale) + fogDrift * (uTime * uFogDriftSpeed * 0.1);
+        // Isotropic-only warp to avoid directional (horizontal/vertical/diagonal) line artifacts.
+        float fogNoiseMain = fbm(baseNoiseCoord);
+        float fogNoiseDetail = noise2d(baseNoiseCoord * 1.91 + vec2(1.7, 6.3));
+        float fogNoise = mix(fogNoiseMain, fogNoiseDetail, 0.12);
+        float fogWarp = (fogNoise - 0.5) * 2.0 * uFogWarpAmount;
+        // Very small dither helps hide subtle smoothstep banding/line artifacts.
+        float dither = (hash12(uv * uResolution + vec2(uTime * 17.3, uTime * 9.1)) - 0.5) / 255.0;
+        float dWarped = d + fogWarp + dither;
+
+        float vignette = 1.0 - smoothstep(uVignetteInner, uVignetteOuter, dWarped);
         float edge = 1.0 - vignette;
-        float strength = mix(uVignetteStrength, uGlowStrength, uProximityBlend);
-        vec3 col = mix(uVignetteColor, uGlowColor, uProximityBlend);
-        float alpha = edge * strength;
+        float glowBand = smoothstep(uGlowInner, uGlowOuter, dWarped);
+        float edgeGlowMask = max(edge, glowBand);
+
         float flicker = 1.0 + uFlickerAmount * (
             sin(uTime * uFlickerSpeed) * 0.5 +
             sin(uTime * uFlickerSpeed * 1.7) * 0.3 +
             sin(uTime * uFlickerSpeed * 2.3) * 0.2
         );
-        alpha *= mix(1.0, flicker, uProximityBlend);
-        gl_FragColor = vec4(col, alpha);
+
+        float directionalGlow = 0.0;
+        if (uDirectionalGlowCount > 0) {
+            vec2 uvVec = uv - vec2(0.5);
+            vec2 uvDir = normalize(uvVec + vec2(0.00001));
+            float edgeBand = edgeGlowMask;
+            for (int i = 0; i < MAX_DIRECTIONAL_GLOWS; i++) {
+                if (i >= uDirectionalGlowCount) break;
+                vec4 glow = uDirectionalGlowData[i];
+                vec2 center = glow.xy;
+                float strength = glow.z;
+                float size = clamp(glow.w, 0.0, 1.0);
+
+                vec2 sourceDir = normalize((center - vec2(0.5)) + vec2(0.00001));
+                float aligned = max(0.0, dot(uvDir, sourceDir));
+                float angular = pow(aligned, mix(20.0, 3.0, size));
+
+                vec2 edgeAnchor = vec2(0.5) + sourceDir * 0.48;
+                float anchorDist = distance(uv, edgeAnchor);
+                float anchorRadius = mix(0.20, 0.58, size);
+                float anchorMask = 1.0 - smoothstep(anchorRadius, anchorRadius + 0.35, anchorDist);
+                directionalGlow += angular * edgeBand * anchorMask * strength;
+            }
+        }
+        directionalGlow = clamp(directionalGlow, 0.0, 1.0) * mix(1.0, flicker, 0.28);
+        directionalGlow *= (1.0 - clamp(uInnerBlend, 0.0, 1.0) * 0.92);
+
+        float fullEdgeGlow = 0.0;
+        if (uInnerBlend > 0.001) {
+            float angle = atan(ctAspect.y, ctAspect.x);
+            float naturalVariation =
+                0.72 +
+                0.16 * sin(angle * 3.0 + uTime * 0.7) +
+                0.12 * sin(angle * 6.0 - uTime * 1.25) +
+                0.10 * sin(angle * 11.0 + uTime * 0.35);
+            naturalVariation = clamp(naturalVariation, 0.45, 1.15);
+
+            float fogLayer = smoothstep(uGlowInner - 0.14, uGlowOuter + 0.24, dWarped);
+            float rimStart = uGlowInner + 0.02;
+            float rimEnd = rimStart + max(0.01, uInnerRimThickness);
+            float rimTail = rimEnd + max(0.03, uInnerRimThickness * 1.8);
+            float rimLayer = smoothstep(rimStart, rimEnd, dWarped) * (1.0 - smoothstep(rimEnd, rimTail, dWarped));
+            float innerShape = (fogLayer * uInnerFogStrength) + (rimLayer * uInnerRimStrength);
+
+            fullEdgeGlow = edgeGlowMask * uGlowStrength * uInnerBlend * naturalVariation * innerShape;
+            fullEdgeGlow *= mix(1.0, flicker, clamp(uInnerBlend, 0.0, 1.0));
+        }
+
+        float baseVignetteAlpha = edge * uVignetteStrength * (1.0 - uInnerBlend * 0.9);
+        float glowAlpha = directionalGlow + fullEdgeGlow;
+        float totalAlpha = clamp(baseVignetteAlpha + glowAlpha, 0.0, 1.0);
+
+        vec3 combinedColor = vec3(0.0);
+        if (totalAlpha > 0.0001) {
+            combinedColor = (
+                uVignetteColor * baseVignetteAlpha +
+                uGlowColor * glowAlpha
+            ) / totalAlpha;
+        }
+
+        gl_FragColor = vec4(combinedColor, totalAlpha);
     }
 `;
 
@@ -61,13 +176,17 @@ class ScreenVignetteEffect extends BaseEffect {
     constructor(scene, camera, renderer, parallaxInstance) {
         super(scene, camera, renderer, parallaxInstance);
         this.effectType = 'screen';
-        this.raycaster = new THREE.Raycaster();
-        this.mouse = new THREE.Vector2();
-        this._tmpIntersect = new THREE.Vector3();
         this.mousePixelX = -1;
         this.mousePixelY = -1;
-        this.lastMouseUV = new THREE.Vector2(-1, -1);
-        this.proximityBlend = 0;
+        this.innerBlend = 0;
+        this._directionalGlowData = Array.from(
+            { length: MAX_DIRECTIONAL_GLOWS },
+            () => new THREE.Vector4(0, 0, 0, 0)
+        );
+        this._frameCounter = 0;
+        this._cachedRect = null;
+        this._cachedRectFrame = -1;
+        this._zeroDirectionalGlowData();
     }
 
     async init() {
@@ -86,9 +205,19 @@ class ScreenVignetteEffect extends BaseEffect {
             uVignetteVertical: { value: this.vignetteVertical },
             uGlowStrength: { value: this.glowStrengthMax },
             uGlowColor: { value: this.glowColor },
-            uProximityBlend: { value: 0 },
+            uInnerBlend: { value: 0 },
+            uDirectionalGlowCount: { value: 0 },
+            uDirectionalGlowData: { value: this._directionalGlowData },
             uFlickerSpeed: { value: this.flickerSpeed },
-            uFlickerAmount: { value: this.flickerAmount }
+            uFlickerAmount: { value: this.flickerAmount },
+            uInnerFogStrength: { value: this.innerFogStrength },
+            uInnerRimStrength: { value: this.innerRimStrength },
+            uInnerRimThickness: { value: this.innerRimThickness },
+            uFogNoiseScale: { value: this.fogNoiseScale },
+            uFogWarpAmount: { value: this.fogWarpAmount },
+            uFogDriftSpeed: { value: this.fogDriftSpeed },
+            uFogDriftX: { value: this.fogDriftX },
+            uFogDriftY: { value: this.fogDriftY }
         };
         this.overlayMesh = this.createScreenEffectMesh(
             DEFAULT_FRAGMENT_SHADER,
@@ -104,6 +233,17 @@ class ScreenVignetteEffect extends BaseEffect {
         });
         this.isInitialized = true;
         log(`ScreenVignetteEffect: Initialized with ${this._enabledLanternConfigs.length} lanterns for proximity`);
+    }
+
+    _zeroDirectionalGlowData() {
+        for (let i = 0; i < this._directionalGlowData.length; i++) {
+            this._directionalGlowData[i].set(0, 0, 0, 0);
+        }
+    }
+
+    _smoothstep01(x) {
+        const v = Math.max(0, Math.min(1, x));
+        return v * v * (3 - 2 * v);
     }
 
     _refreshEnabledLanternConfigs() {
@@ -156,7 +296,8 @@ class ScreenVignetteEffect extends BaseEffect {
         const canvas = this.parallax?.canvas;
         if (!canvas) return;
         const handleMove = (clientX, clientY) => {
-            const rect = canvas.getBoundingClientRect();
+            const rect = this._getCanvasRect();
+            if (!rect) return;
             this.mousePixelX = clientX - rect.left;
             this.mousePixelY = clientY - rect.top;
         };
@@ -166,57 +307,62 @@ class ScreenVignetteEffect extends BaseEffect {
         };
         canvas.addEventListener('mousemove', onMouse);
         canvas.addEventListener('touchmove', onTouch, { passive: true });
+        this._resizeHandler = () => this._invalidateRectCache();
+        this._scrollHandler = () => this._invalidateRectCache();
+        window.addEventListener('resize', this._resizeHandler);
+        window.addEventListener('scroll', this._scrollHandler, { passive: true });
         this._mouseHandler = onMouse;
         this._touchHandler = onTouch;
     }
 
-    getUVAtPixel(pixelX, pixelY) {
+    _invalidateRectCache() {
+        this._cachedRectFrame = -1;
+    }
+
+    _getCanvasRect() {
+        if (this._cachedRectFrame === this._frameCounter) return this._cachedRect;
         const canvas = this.parallax?.canvas;
-        const t = this.parallax?.meshTransform;
-        if (!canvas || !this.camera || !t) return null;
-        const rect = canvas.getBoundingClientRect();
-        this.mouse.x = (pixelX / rect.width) * 2 - 1;
-        this.mouse.y = -((pixelY / rect.height) * 2 - 1);
-        this.raycaster.setFromCamera(this.mouse, this.camera);
-        const { origin, direction } = this.raycaster.ray;
-        if (Math.abs(direction.z) < 1e-6) return null;
-        const d = -origin.z / direction.z;
-        this._tmpIntersect.set(
-            origin.x + direction.x * d,
-            origin.y + direction.y * d,
-            0
-        );
-        const scale = t.scale;
-        const w = t.baseGeometrySize?.width ?? 1;
-        const h = t.baseGeometrySize?.height ?? 1;
-        const localX = (this._tmpIntersect.x - t.position.x) / scale;
-        const localY = (this._tmpIntersect.y - t.position.y) / scale;
-        let u = localX / w + 0.5;
-        let v = localY / h + 0.5;
-        const offset = this.uvOffset ?? { u: 0, v: 0 };
-        u += offset.u ?? 0;
-        v += offset.v ?? 0;
-        return new THREE.Vector2(u, v);
+        if (!canvas) return null;
+        this._cachedRect = canvas.getBoundingClientRect();
+        this._cachedRectFrame = this._frameCounter;
+        return this._cachedRect;
     }
 
     /**
-     * Screen-space proximity: project lantern world positions to pixels, compare to mouse.
-     * Fixes depth/position offset (lanterns at different z or x,y appear correctly).
+     * Computes per-lantern directional edge glows and full-edge blend target.
+     * Outer radius drives directional edge glow; inner radius drives full-edge glow takeover.
      */
-    computeProximityScreenSpace(mousePixelX, mousePixelY) {
+    computeGlowState(mousePixelX, mousePixelY) {
         const cfg = this.getConfig().lanternProximity ?? {};
         const enabled = cfg.enabled !== false;
-        if (!enabled || !this.camera) return 0;
+        if (!enabled || !this.camera) {
+            return { directionalGlows: [], innerBlendTarget: 0 };
+        }
         const configs = this._enabledLanternConfigs ?? [];
         const worldPositions = this.getLanternPositionsWorld();
-        if (configs.length === 0 || worldPositions.length === 0) return 0;
-        const canvas = this.parallax?.canvas;
-        if (!canvas) return 0;
-        const rect = canvas.getBoundingClientRect();
-        const radiusPixels = (cfg.radiusPixels != null ? cfg.radiusPixels : null)
-            ?? (cfg.radius ?? 0.08) * Math.min(rect.width, rect.height);
+        if (configs.length === 0 || worldPositions.length === 0) {
+            return { directionalGlows: [], innerBlendTarget: 0 };
+        }
+        const rect = this._getCanvasRect();
+        if (!rect) return { directionalGlows: [], innerBlendTarget: 0 };
+
+        const minDim = Math.min(rect.width, rect.height);
+        const outerRadiusPixels = (cfg.outerRadiusPixels != null ? cfg.outerRadiusPixels : null)
+            ?? (cfg.outerRadius ?? 0.10) * minDim;
+        const innerRadiusPixels = (cfg.innerRadiusPixels != null ? cfg.innerRadiusPixels : null)
+            ?? (cfg.innerRadius ?? 0.045) * minDim;
+        const outerRadius = Math.max(2, outerRadiusPixels);
+        const innerRadius = Math.max(1, Math.min(innerRadiusPixels, outerRadius - 1));
+
+        const dirStrengthMin = cfg.directionalStrengthMin ?? 0.04;
+        const dirStrengthMax = cfg.directionalStrengthMax ?? 0.24;
+        const dirSizeMin = cfg.directionalSizeMin ?? 0.20;
+        const dirSizeMax = cfg.directionalSizeMax ?? 0.92;
+
         const _proj = this._projVec ?? (this._projVec = new THREE.Vector3());
-        let maxContrib = 0;
+        const directionalGlows = [];
+        let maxInnerBlend = 0;
+
         for (let i = 0; i < worldPositions.length; i++) {
             const w = worldPositions[i];
             const c = configs[i];
@@ -228,13 +374,49 @@ class ScreenVignetteEffect extends BaseEffect {
             const dx = mousePixelX - px;
             const dy = mousePixelY - py;
             const d = Math.sqrt(dx * dx + dy * dy);
-            if (d > radiusPixels) continue;
-            const t = 1 - d / radiusPixels;
-            const v = Math.max(0, Math.min(1, t));
-            const contrib = v * v * (3 - 2 * v) * fade;
-            if (contrib > maxContrib) maxContrib = contrib;
+
+            if (d > outerRadius) continue;
+
+            const outerProgressRaw = (outerRadius - d) / (outerRadius - innerRadius);
+            const outerProgress = this._smoothstep01(outerProgressRaw);
+            const innerRaw = (innerRadius - d) / innerRadius;
+            const innerProgress = this._smoothstep01(innerRaw);
+            maxInnerBlend = Math.max(maxInnerBlend, innerProgress * fade);
+
+            const innerFadeOut = 1 - innerProgress * 0.88;
+            const strength = (dirStrengthMin + (dirStrengthMax - dirStrengthMin) * outerProgress) * fade * innerFadeOut;
+            const size = dirSizeMin + (dirSizeMax - dirSizeMin) * outerProgress;
+            if (strength <= 0.0001) continue;
+
+            // Direction is driven by mouse->lantern vector so circling around a lantern moves the edge glow.
+            let dirX = (px - mousePixelX);
+            let dirY = (py - mousePixelY);
+            const dirLen = Math.sqrt(dirX * dirX + dirY * dirY);
+            if (dirLen > 1e-4) {
+                dirX /= dirLen;
+                dirY /= dirLen;
+            } else {
+                // Fallback when pointer is exactly over lantern: use screen-center reference.
+                dirX = px - rect.width * 0.5;
+                dirY = py - rect.height * 0.5;
+                const centerLen = Math.sqrt(dirX * dirX + dirY * dirY) || 1;
+                dirX /= centerLen;
+                dirY /= centerLen;
+            }
+
+            directionalGlows.push({
+                x: 0.5 + dirX * 0.5,
+                y: 0.5 - dirY * 0.5,
+                strength,
+                size
+            });
         }
-        return maxContrib;
+
+        directionalGlows.sort((a, b) => b.strength - a.strength);
+        return {
+            directionalGlows: directionalGlows.slice(0, MAX_DIRECTIONAL_GLOWS),
+            innerBlendTarget: maxInnerBlend
+        };
     }
 
     applyConfig(config) {
@@ -250,9 +432,16 @@ class ScreenVignetteEffect extends BaseEffect {
         this.glowColor = this.parseColor(config.glowColor ?? '0xffdd66');
         this.glowStrengthMax = config.glowStrengthMax ?? 0.25;
         this.glowFadeInDuration = this.parallax?.config?.effects?.lanterns?.glowFadeInDuration ?? 2;
-        this.uvOffset = config.uvOffset ?? { u: 0, v: 0 };
         this.flickerSpeed = config.flickerSpeed ?? 8;
         this.flickerAmount = config.flickerAmount ?? 0.35;
+        this.innerFogStrength = config.innerFogStrength ?? 0.95;
+        this.innerRimStrength = config.innerRimStrength ?? 0.28;
+        this.innerRimThickness = config.innerRimThickness ?? 0.09;
+        this.fogNoiseScale = config.fogNoiseScale ?? 5.5;
+        this.fogWarpAmount = config.fogWarpAmount ?? 0.075;
+        this.fogDriftSpeed = config.fogDriftSpeed ?? 0.65;
+        this.fogDriftX = config.fogDriftX ?? 0.9;
+        this.fogDriftY = config.fogDriftY ?? 0.35;
     }
 
     getConfig() {
@@ -272,22 +461,30 @@ class ScreenVignetteEffect extends BaseEffect {
 
     update(deltaTime) {
         if (!this.isInitialized || !this.overlayMesh?.material?.uniforms) return;
+        this._frameCounter++;
         const u = this.overlayMesh.material.uniforms;
         if (u.uTime) u.uTime.value += deltaTime;
 
         let px = this.mousePixelX;
         let py = this.mousePixelY;
         if (px < 0 || py < 0) {
-            const canvas = this.parallax?.canvas;
-            if (canvas) {
-                const rect = canvas.getBoundingClientRect();
+            const rect = this._getCanvasRect();
+            if (rect) {
                 px = rect.width * 0.5;
                 py = rect.height * 0.5;
             }
         }
-        const blend = this.computeProximityScreenSpace(px, py);
-        this.proximityBlend += (blend - this.proximityBlend) * 0.12;
-        u.uProximityBlend.value = this.proximityBlend;
+        const glowState = this.computeGlowState(px, py);
+        this.innerBlend += (glowState.innerBlendTarget - this.innerBlend) * 0.10;
+        u.uInnerBlend.value = this.innerBlend;
+
+        this._zeroDirectionalGlowData();
+        const active = Math.min(MAX_DIRECTIONAL_GLOWS, glowState.directionalGlows.length);
+        for (let i = 0; i < active; i++) {
+            const g = glowState.directionalGlows[i];
+            this._directionalGlowData[i].set(g.x, g.y, g.strength, g.size);
+        }
+        if (u.uDirectionalGlowCount) u.uDirectionalGlowCount.value = active;
     }
 
     updateUniformsFromConfig(config) {
@@ -304,9 +501,18 @@ class ScreenVignetteEffect extends BaseEffect {
         u.uVignetteRoundness.value = this.vignetteRoundness;
         u.uVignetteHorizontal.value = this.vignetteHorizontal;
         u.uVignetteVertical.value = this.vignetteVertical;
+        u.uGlowStrength.value = this.glowStrengthMax;
         u.uGlowColor.value.copy(this.glowColor);
         if (u.uFlickerSpeed) u.uFlickerSpeed.value = this.flickerSpeed;
         if (u.uFlickerAmount) u.uFlickerAmount.value = this.flickerAmount;
+        if (u.uInnerFogStrength) u.uInnerFogStrength.value = this.innerFogStrength;
+        if (u.uInnerRimStrength) u.uInnerRimStrength.value = this.innerRimStrength;
+        if (u.uInnerRimThickness) u.uInnerRimThickness.value = this.innerRimThickness;
+        if (u.uFogNoiseScale) u.uFogNoiseScale.value = this.fogNoiseScale;
+        if (u.uFogWarpAmount) u.uFogWarpAmount.value = this.fogWarpAmount;
+        if (u.uFogDriftSpeed) u.uFogDriftSpeed.value = this.fogDriftSpeed;
+        if (u.uFogDriftX) u.uFogDriftX.value = this.fogDriftX;
+        if (u.uFogDriftY) u.uFogDriftY.value = this.fogDriftY;
     }
 
     cleanup() {
@@ -320,6 +526,14 @@ class ScreenVignetteEffect extends BaseEffect {
         }
         if (canvas && this._touchHandler) {
             canvas.removeEventListener('touchmove', this._touchHandler);
+        }
+        if (this._resizeHandler) {
+            window.removeEventListener('resize', this._resizeHandler);
+            this._resizeHandler = null;
+        }
+        if (this._scrollHandler) {
+            window.removeEventListener('scroll', this._scrollHandler);
+            this._scrollHandler = null;
         }
         super.cleanup();
     }

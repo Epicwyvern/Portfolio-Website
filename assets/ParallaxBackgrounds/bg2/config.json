@@ -405,7 +405,7 @@
       },
       "splooshInteraction": {
         "enabled": true,
-        "strength": 50.0,
+        "strength": 40.0,
         "radius": 0.1,
         "frequency": 200.0,
         "speed": 0.08,
@@ -449,13 +449,25 @@
       "horizontal": 1.0,
       "vertical": 1.0,
       "glowColor": "0xffdd66",
-      "glowStrengthMax": 0.15,
-      "uvOffset": { "u": 0, "v": 0},
+      "glowStrengthMax": 0.5,
       "flickerSpeed": 5,
       "flickerAmount": 0.7,
+      "innerFogStrength": 0.95,
+      "innerRimStrength": 0.28,
+      "innerRimThickness": 0.09,
+      "fogNoiseScale": 5.5,
+      "fogWarpAmount": 0.3,
+      "fogDriftSpeed": 2.5,
+      "fogDriftX": 0.9,
+      "fogDriftY": 0.35,
       "lanternProximity": {
         "enabled": true,
-        "radius": 0.06
+        "outerRadius": 0.15,
+        "innerRadius": 0.045,
+        "directionalStrengthMin": 0.01,
+        "directionalStrengthMax": 0.2,
+        "directionalSizeMin": 0.18,
+        "directionalSizeMax": 0.99
       }
     }
   }

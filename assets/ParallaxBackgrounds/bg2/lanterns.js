@@ -221,7 +221,14 @@ class LanternEffect extends BaseEffect {
     setupClickToToggle() {
         const canvas = this.parallax?.canvas;
         if (!canvas) return;
+        const tapMaxDurationMs = 280;
+        const tapMoveThresholdPx = 12;
+        this._activeTouchToggle = null;
+        this._lastTouchEndAt = 0;
+
         const handleClick = (e) => {
+            // Ignore synthetic click events generated right after touch interactions.
+            if (performance.now() - (this._lastTouchEndAt || 0) < 700) return;
             const system = this._findLanternAtClientXY(e.clientX, e.clientY);
             if (system) {
                 const name = system.name;
@@ -229,10 +236,57 @@ class LanternEffect extends BaseEffect {
                 this.parallax.setFlag(`effects.lanterns.individual.${name}`, !current);
             }
         };
-        const handleTouch = (e) => {
-            const t = (e.changedTouches && e.changedTouches[0]) || (e.touches && e.touches[0]);
+
+        const handleTouchStart = (e) => {
+            const t = e.touches && e.touches[0];
             if (!t) return;
-            const system = this._findLanternAtClientXY(t.clientX, t.clientY);
+            this._activeTouchToggle = {
+                id: t.identifier,
+                startX: t.clientX,
+                startY: t.clientY,
+                startTime: performance.now(),
+                moved: false
+            };
+        };
+
+        const handleTouchMove = (e) => {
+            if (!this._activeTouchToggle) return;
+            let activeTouch = null;
+            for (let i = 0; i < e.touches.length; i++) {
+                const t = e.touches[i];
+                if (t.identifier === this._activeTouchToggle.id) {
+                    activeTouch = t;
+                    break;
+                }
+            }
+            if (!activeTouch) return;
+            const dx = activeTouch.clientX - this._activeTouchToggle.startX;
+            const dy = activeTouch.clientY - this._activeTouchToggle.startY;
+            if ((dx * dx + dy * dy) > (tapMoveThresholdPx * tapMoveThresholdPx)) {
+                this._activeTouchToggle.moved = true;
+            }
+        };
+
+        const handleTouchEnd = (e) => {
+            const state = this._activeTouchToggle;
+            this._lastTouchEndAt = performance.now();
+            if (!state) return;
+
+            let changed = null;
+            for (let i = 0; i < e.changedTouches.length; i++) {
+                const t = e.changedTouches[i];
+                if (t.identifier === state.id) {
+                    changed = t;
+                    break;
+                }
+            }
+            this._activeTouchToggle = null;
+            if (!changed) return;
+
+            const duration = performance.now() - state.startTime;
+            if (state.moved || duration > tapMaxDurationMs) return;
+
+            const system = this._findLanternAtClientXY(changed.clientX, changed.clientY);
             if (system) {
                 e.preventDefault();
                 const name = system.name;
@@ -240,10 +294,21 @@ class LanternEffect extends BaseEffect {
                 this.parallax.setFlag(`effects.lanterns.individual.${name}`, !current);
             }
         };
+
+        const handleTouchCancel = () => {
+            this._activeTouchToggle = null;
+        };
+
         canvas.addEventListener('click', handleClick);
-        canvas.addEventListener('touchend', handleTouch, { passive: false });
+        canvas.addEventListener('touchstart', handleTouchStart, { passive: true });
+        canvas.addEventListener('touchmove', handleTouchMove, { passive: true });
+        canvas.addEventListener('touchend', handleTouchEnd, { passive: false });
+        canvas.addEventListener('touchcancel', handleTouchCancel, { passive: true });
         this._clickHandler = handleClick;
-        this._touchHandler = handleTouch;
+        this._touchStartHandler = handleTouchStart;
+        this._touchMoveHandler = handleTouchMove;
+        this._touchHandler = handleTouchEnd;
+        this._touchCancelHandler = handleTouchCancel;
     }
 
     _refreshDisabledLanterns() {
@@ -670,6 +735,19 @@ class LanternEffect extends BaseEffect {
             canvas.removeEventListener('touchend', this._touchHandler);
             this._touchHandler = null;
         }
+        if (canvas && this._touchStartHandler) {
+            canvas.removeEventListener('touchstart', this._touchStartHandler);
+            this._touchStartHandler = null;
+        }
+        if (canvas && this._touchMoveHandler) {
+            canvas.removeEventListener('touchmove', this._touchMoveHandler);
+            this._touchMoveHandler = null;
+        }
+        if (canvas && this._touchCancelHandler) {
+            canvas.removeEventListener('touchcancel', this._touchCancelHandler);
+            this._touchCancelHandler = null;
+        }
+        this._activeTouchToggle = null;
         // Don't clear fullLanternConfig or flareTexture - keep them for re-init
         // Reset time to prevent stale state
         this.time = 0;

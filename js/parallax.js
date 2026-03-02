@@ -4,6 +4,12 @@
 import * as THREE from 'https://unpkg.com/three@0.172.0/build/three.module.js';
 import EffectManager from './effect-manager.js';
 
+const debugLog = (...args) => {
+    if (window.location.pathname.endsWith('test-effects.html')) {
+        console.log(...args);
+    }
+};
+
 class SimpleParallax {
     constructor(backgroundName = 'bg2') {
         this.backgroundName = backgroundName;
@@ -102,6 +108,12 @@ class SimpleParallax {
 
         // Frame timing for time-based effects
         this.lastFrameTime = performance.now();
+        this._inputBounds = {
+            left: 0,
+            top: 0,
+            invWidth: 1 / Math.max(1, window.innerWidth),
+            invHeight: 1 / Math.max(1, window.innerHeight)
+        };
         
         this.init();
     }
@@ -292,22 +304,22 @@ class SimpleParallax {
     async loadConfig() {
         try {
             const configPath = `./assets/ParallaxBackgrounds/${this.backgroundName}/config.json`;
-            console.log(`Looking for config file: ${configPath}`);
+            debugLog(`Looking for config file: ${configPath}`);
             
             const response = await fetch(configPath);
             if (response.ok) {
                 const configData = await response.json();
-                console.log('Loaded config:', configData);
+                debugLog('Loaded config:', configData);
                 
                 // Merge loaded config with defaults
                 this.config = { ...this.config, ...configData };
                 this.applyConfig();
                 
             } else {
-                console.log(`No config file found at ${configPath}, using defaults`);
+                debugLog(`No config file found at ${configPath}, using defaults`);
             }
         } catch (error) {
-            console.log('Error loading config, using defaults:', error);
+            debugLog('Error loading config, using defaults:', error);
         }
     }
 
@@ -318,14 +330,14 @@ class SimpleParallax {
             if (response.ok) {
                 const data = await response.json();
                 this.flags = data;
-                console.log('Loaded flags:', this.flags);
+                debugLog('Loaded flags:', this.flags);
             } else {
                 this.flags = {};
-                console.log(`No flags file at ${flagsPath}, all flags default to true`);
+                debugLog(`No flags file at ${flagsPath}, all flags default to true`);
             }
         } catch (error) {
             this.flags = {};
-            console.log('Error loading flags, using defaults:', error);
+            debugLog('Error loading flags, using defaults:', error);
         }
     }
 
@@ -514,7 +526,7 @@ class SimpleParallax {
         }
         
         if (wasMobile !== this.isMobile) {
-            console.log(`Input mode updated: ${this.isMobile ? 'tilt (mobile)' : 'mouse/touch (tablet/desktop)'}`);
+            debugLog(`Input mode updated: ${this.isMobile ? 'tilt (mobile)' : 'mouse/touch (tablet/desktop)'}`);
         }
 
         if (this.isMobile && this.orientationEnabled) {
@@ -535,16 +547,16 @@ class SimpleParallax {
                 this.orientationPermissionGranted = permission === 'granted';
                 
                 if (this.orientationPermissionGranted) {
-                    console.log('Device orientation permission granted');
+                    debugLog('Device orientation permission granted');
                     this.setupOrientationListeners();
                     this.hideOrientationPrompt();
                 } else {
-                    console.log('Device orientation permission denied');
+                    debugLog('Device orientation permission denied');
                     this.handleOrientationFallback();
                     this.hideOrientationPrompt();
                 }
             } catch (error) {
-                console.log('Error requesting orientation permission:', error);
+                debugLog('Error requesting orientation permission:', error);
                 this.handleOrientationFallback();
                 this.hideOrientationPrompt();
             }
@@ -552,10 +564,10 @@ class SimpleParallax {
             // Older browsers or Android - no permission needed
             this.orientationPermissionGranted = true;
             this.orientationSupported = true;
-            console.log('Device orientation available without permission');
+            debugLog('Device orientation available without permission');
             this.setupOrientationListeners();
         } else {
-            console.log('Device orientation not supported');
+            debugLog('Device orientation not supported');
             this.handleOrientationFallback();
         }
     }
@@ -563,7 +575,7 @@ class SimpleParallax {
     setupOrientationListeners() {
         if (!this.orientationPermissionGranted) return;
         
-        console.log('Setting up device orientation listeners');
+        debugLog('Setting up device orientation listeners');
         this.orientationBaseline = null;
         this.orientationBaselineSamples = [];
         
@@ -577,11 +589,11 @@ class SimpleParallax {
         // Test if we're actually getting orientation data
         setTimeout(() => {
             if (!this.orientationDataReceived) {
-                console.log('No orientation data received, falling back to touch');
+                debugLog('No orientation data received, falling back to touch');
                 this.handleOrientationFallback();
             } else {
                 this.orientationSupported = true;
-                console.log('Device orientation working correctly');
+                debugLog('Device orientation working correctly');
             }
         }, 2000);
     }
@@ -655,11 +667,11 @@ class SimpleParallax {
 
     handleOrientationFallback() {
         if (this.orientationFallbackToTouch && this.isMobile) {
-            console.log('Using touch controls as fallback');
+            debugLog('Using touch controls as fallback');
             this.useOrientation = false;
             // Touch events are already set up in setupEventListeners()
         } else {
-            console.log('No orientation or touch fallback available');
+            debugLog('No orientation or touch fallback available');
         }
     }
 
@@ -678,7 +690,8 @@ class SimpleParallax {
             canvas: this.canvas,
             antialias: true, 
             preserveDrawingBuffer: true, 
-            alpha: true 
+            alpha: true,
+            powerPreference: 'high-performance'
         });
         this.renderer.outputEncoding = THREE.sRGBEncoding;
         this.renderer.setPixelRatio(this.devicePixelRatio);
@@ -688,7 +701,7 @@ class SimpleParallax {
         await this.loadImageAndDepthMap();
         
         // Initialize effect manager after scene is ready
-        console.log('SimpleParallax: Initializing effect manager');
+        debugLog('SimpleParallax: Initializing effect manager');
         this.effectManager = new EffectManager(this.scene, this.camera, this.renderer, this);
         await this.effectManager.loadEffects();
         
@@ -697,16 +710,16 @@ class SimpleParallax {
         
         // Setup device orientation if on mobile
         if (this.isMobile && this.orientationEnabled) {
-            console.log('Mobile device detected, setting up orientation controls');
+            debugLog('Mobile device detected, setting up orientation controls');
             const needsPermission = typeof DeviceOrientationEvent !== 'undefined' &&
                 typeof DeviceOrientationEvent.requestPermission === 'function';
             if (!needsPermission) {
                 await this.requestOrientationPermission();
             } else {
-                console.log('Orientation permission requires user gesture; waiting for touch');
+                debugLog('Orientation permission requires user gesture; waiting for touch');
             }
         } else {
-            console.log('Desktop/tablet detected, using mouse/touch controls');
+            debugLog('Desktop/tablet detected, using mouse/touch controls');
         }
         
         // Start animation loop
@@ -900,7 +913,6 @@ class SimpleParallax {
 
         // Mark attributes as needing update
         geometry.attributes.position.needsUpdate = true;
-        geometry.computeVertexNormals();
         return geometry;
     }
 
@@ -923,6 +935,8 @@ class SimpleParallax {
     }
 
     setupEventListeners() {
+        this.updateInputBounds();
+
         // Attempt orientation permission on first user gesture (iOS requirement)
         document.addEventListener('touchstart', async () => {
             if (!this.isMobile || !this.useOrientation || !this.orientationEnabled) return;
@@ -939,9 +953,8 @@ class SimpleParallax {
             this.mouseOnScreen = true;
             this.lastMouseMoveTime = Date.now();
             
-            const rect = this.container.getBoundingClientRect();
-            this.mouseX = Math.min(1, Math.max(-1, (event.clientX - rect.left) / window.innerWidth * 2 - 1));
-            this.mouseY = Math.min(1, Math.max(-1, (event.clientY - rect.top) / window.innerHeight * 2 - 1));
+            this.mouseX = Math.min(1, Math.max(-1, (event.clientX - this._inputBounds.left) * this._inputBounds.invWidth * 2 - 1));
+            this.mouseY = Math.min(1, Math.max(-1, (event.clientY - this._inputBounds.top) * this._inputBounds.invHeight * 2 - 1));
             this.mouseX = -this.mouseX;
         });
 
@@ -970,9 +983,8 @@ class SimpleParallax {
             this.lastMouseMoveTime = Date.now();
             
             const touch = event.touches[0];
-            const rect = this.container.getBoundingClientRect();
-            this.mouseX = Math.min(1, Math.max(-1, (touch.clientX - rect.left) / window.innerWidth * 2 - 1));
-            this.mouseY = Math.min(1, Math.max(-1, (touch.clientY - rect.top) / window.innerHeight * 2 - 1));
+            this.mouseX = Math.min(1, Math.max(-1, (touch.clientX - this._inputBounds.left) * this._inputBounds.invWidth * 2 - 1));
+            this.mouseY = Math.min(1, Math.max(-1, (touch.clientY - this._inputBounds.top) * this._inputBounds.invHeight * 2 - 1));
             this.mouseX = -this.mouseX;
         });
         
@@ -987,6 +999,7 @@ class SimpleParallax {
         // Window resize
         window.addEventListener('resize', () => {
             this.updateInputModeFromViewport();
+            this.updateInputBounds();
             const nextPixelRatio = this.resolveDevicePixelRatio();
             if (this.devicePixelRatio !== nextPixelRatio) {
                 this.devicePixelRatio = nextPixelRatio;
@@ -1026,6 +1039,19 @@ class SimpleParallax {
         this.cacheCanonicalTransform();
             }
         });
+
+        window.addEventListener('scroll', () => {
+            this.updateInputBounds();
+        }, { passive: true });
+    }
+
+    updateInputBounds() {
+        if (!this.container) return;
+        const rect = this.container.getBoundingClientRect();
+        this._inputBounds.left = rect.left;
+        this._inputBounds.top = rect.top;
+        this._inputBounds.invWidth = 1 / Math.max(1, window.innerWidth);
+        this._inputBounds.invHeight = 1 / Math.max(1, window.innerHeight);
     }
 
     resetToCenter() {
@@ -1069,6 +1095,11 @@ class SimpleParallax {
         this.lastFrameTime = now;
         if (deltaTime > 0.1) {
             deltaTime = 0.1;
+        }
+
+        // Avoid per-frame effect updates/renders when tab isn't visible.
+        if (document.hidden) {
+            return;
         }
 
         // Update auto-movement
@@ -1119,14 +1150,14 @@ class SimpleParallax {
             this.meshTransform.baseGeometrySize.width = this.mesh.geometry.parameters.width;
             this.meshTransform.baseGeometrySize.height = this.mesh.geometry.parameters.height;
             
-            console.log('SimpleParallax: Updated mesh transform tracking:', this.meshTransform);
+            debugLog('SimpleParallax: Updated mesh transform tracking:', this.meshTransform);
         }
     }
     
     // Notify effects to update their positions based on mesh scaling
     updateEffectPositions() {
         if (this.effectManager && this.effectManager.isReady()) {
-            console.log('SimpleParallax: Notifying effects of mesh transformation change');
+            debugLog('SimpleParallax: Notifying effects of mesh transformation change');
             this.effectManager.effectInstances.forEach(effectInstance => {
                 if (effectInstance.updatePositionsForMeshTransform) {
                     effectInstance.updatePositionsForMeshTransform(this.meshTransform);
@@ -1276,17 +1307,17 @@ class SimpleParallax {
         this.targetY = 0;
         this.mouseX = 0;
         this.mouseY = 0;
-        console.log('Parallax locked at center position');
+        debugLog('Parallax locked at center position');
     }
     
     unlock() {
         this.isLocked = false;
-        console.log('Parallax movement unlocked');
+        debugLog('Parallax movement unlocked');
     }
     
     // Method to cleanup resources
     destroy() {
-        console.log('SimpleParallax: Destroying parallax instance');
+        debugLog('SimpleParallax: Destroying parallax instance');
         
         // Cleanup effects first
         if (this.effectManager) {
@@ -1305,7 +1336,7 @@ class SimpleParallax {
             this.renderer.dispose();
         }
         
-        console.log('SimpleParallax: Cleanup complete');
+        debugLog('SimpleParallax: Cleanup complete');
     }
 }
 

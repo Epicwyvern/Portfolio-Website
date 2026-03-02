@@ -3,9 +3,15 @@
 
 import * as THREE from 'https://unpkg.com/three@0.172.0/build/three.module.js';
 
+const debugLog = (...args) => {
+    if (window.location.pathname.endsWith('test-effects.html')) {
+        console.log(...args);
+    }
+};
+
 class EffectManager {
     constructor(scene, camera, renderer, parallaxInstance) {
-        console.log('EffectManager: Initializing with scene, camera, renderer, and parallax instance');
+        debugLog('EffectManager: Initializing with scene, camera, renderer, and parallax instance');
         
         this.scene = scene;
         this.camera = camera;
@@ -17,26 +23,26 @@ class EffectManager {
         this.effectInstances = []; // Store all effect instances for updates
         this.isInitialized = false;
         
-        console.log(`EffectManager: Created for background ${this.backgroundName}`);
+        debugLog(`EffectManager: Created for background ${this.backgroundName}`);
     }
     
     async loadEffects() {
-        console.log(`EffectManager: Loading effects for background ${this.backgroundName}`);
+        debugLog(`EffectManager: Loading effects for background ${this.backgroundName}`);
         
         try {
             // Discover effect files in the background folder
             const effectFiles = await this.discoverEffectFiles();
-            console.log(`EffectManager: Found ${effectFiles.length} effect files:`, effectFiles);
+            debugLog(`EffectManager: Found ${effectFiles.length} effect files:`, effectFiles);
             
             if (effectFiles.length === 0) {
-                console.log('EffectManager: No effect files found, skipping effect loading');
+                debugLog('EffectManager: No effect files found, skipping effect loading');
                 return;
             }
             
             // Load each effect
             for (const effectFile of effectFiles) {
                 try {
-                    console.log(`EffectManager: Loading effect file: ${effectFile}`);
+                    debugLog(`EffectManager: Loading effect file: ${effectFile}`);
                     const effectPath = `../assets/ParallaxBackgrounds/${this.backgroundName}/${effectFile}`;
                     const effectModule = await import(effectPath);
                     
@@ -55,7 +61,7 @@ class EffectManager {
                         this.effects.set(effectName, effectInstance);
                         this.effectInstances.push(effectInstance);
                         
-                        console.log(`EffectManager: Successfully loaded effect: ${effectFile} (enabled: ${enabled})`);
+                        debugLog(`EffectManager: Successfully loaded effect: ${effectFile} (enabled: ${enabled})`);
                     } else {
                         console.warn(`EffectManager: Effect file ${effectFile} does not export a default class`);
                     }
@@ -65,7 +71,7 @@ class EffectManager {
             }
             
             this.isInitialized = true;
-            console.log(`EffectManager: Successfully initialized with ${this.effectInstances.length} effects`);
+            debugLog(`EffectManager: Successfully initialized with ${this.effectInstances.length} effects`);
             
         } catch (error) {
             console.error('EffectManager: Error during effect loading:', error);
@@ -73,7 +79,7 @@ class EffectManager {
     }
     
     async discoverEffectFiles() {
-        console.log(`EffectManager: Discovering effect files for ${this.backgroundName}`);
+        debugLog(`EffectManager: Discovering effect files for ${this.backgroundName}`);
         
         // For now, we'll manually define the effect files we expect
         // In a real implementation, you might want to fetch a manifest or scan the directory
@@ -87,7 +93,7 @@ class EffectManager {
         };
         
         const effects = expectedEffects[this.backgroundName] || [];
-        console.log(`EffectManager: Expected effects for ${this.backgroundName}:`, effects);
+        debugLog(`EffectManager: Expected effects for ${this.backgroundName}:`, effects);
         
         return effects;
     }
@@ -111,13 +117,13 @@ class EffectManager {
     }
     
     cleanup() {
-        console.log('EffectManager: Cleaning up all effects');
+        debugLog('EffectManager: Cleaning up all effects');
         
         this.effectInstances.forEach((effect, index) => {
             try {
                 if (effect.cleanup && typeof effect.cleanup === 'function') {
                     effect.cleanup();
-                    console.log(`EffectManager: Cleaned up effect ${index}`);
+                    debugLog(`EffectManager: Cleaned up effect ${index}`);
                 }
             } catch (error) {
                 console.error(`EffectManager: Error cleaning up effect ${index}:`, error);
@@ -128,7 +134,7 @@ class EffectManager {
         this.effectInstances = [];
         this.isInitialized = false;
         
-        console.log('EffectManager: Cleanup complete');
+        debugLog('EffectManager: Cleanup complete');
     }
     
     // Get a specific effect by name
