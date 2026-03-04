@@ -438,6 +438,22 @@
         }
       }
     },
+    "foliageWind": {
+      "maskPath": "assets/bg2FoliageMask.webp",
+      "overlaySegments": 128,
+      "windStrength": 0.0025,
+      "windSpeed": 0.25,
+      "primaryScale": 1.5,
+      "secondaryScale": 6,
+      "gustStrength": 0.001,
+      "gustScale": 1.8,
+      "shimmerStrength": 0.03,
+      "influenceCurve": 0.3,
+      "minInfluence": 0.0,
+      "motionFloor": 0.05,
+      "opacity": 1,
+      "sharpness": 0
+    },
     "screenVignette": {
       "strength": 1,
       "color": "0x000000",
@@ -451,7 +467,7 @@
       "glowColor": "0xffdd66",
       "glowStrengthMax": 0.5,
       "flickerSpeed": 5,
-      "flickerAmount": 0.7,
+      "flickerAmount": 0.4,
       "innerFogStrength": 0.95,
       "innerRimStrength": 0.28,
       "innerRimThickness": 0.09,

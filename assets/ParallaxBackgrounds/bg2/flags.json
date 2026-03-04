@@ -39,6 +39,9 @@
             "wakeInteraction": true,
             "splooshInteraction": true
         },
+        "foliage-wind": {
+            "enabled": true
+        },
         "screen-vignette": {
             "enabled": true
         }
