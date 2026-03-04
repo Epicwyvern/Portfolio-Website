@@ -452,7 +452,7 @@
       "minInfluence": 0.0,
       "motionFloor": 0.05,
       "opacity": 1,
-      "sharpness": 0
+      "sharpness": 0.5
     },
     "screenVignette": {
       "strength": 1,
