@@ -443,6 +443,7 @@
       "overlaySegments": 128,
       "windStrength": 0.0025,
       "windSpeed": 0.25,
+      "windDirection": 0,
       "primaryScale": 1.5,
       "secondaryScale": 6,
       "gustStrength": 0.001,
@@ -450,9 +451,14 @@
       "shimmerStrength": 0.03,
       "influenceCurve": 0.3,
       "minInfluence": 0.0,
-      "motionFloor": 0.05,
-      "opacity": 1,
-      "sharpness": 0.5
+      "sharpness": 0.5,
+      "envelope": {
+        "blowDuration": [3, 8],
+        "calmDuration": [0.5, 2.5],
+        "transitionDuration": [1.2, 2.5],
+        "calmDip": [0.2, 0.7],
+        "speedVariation": 0.001
+      }
     },
     "screenVignette": {
       "strength": 1,
