@@ -1,8 +1,9 @@
-// Foliage Wind Effect - Area effect for bg2: ambient wind shuffle on masked foliage
-// Uses grayscale mask values as per-pixel wind influence strength (0..1)
-// Wind envelope state machine modulates intensity over time (blow/calm cycles)
+// Foliage Wind Effect - Area effect for bg2: ambient wind + interactive rustle on masked foliage
+// Uses grayscale mask for per-pixel wind influence, wind envelope for natural blow/calm cycles,
+// and back-and-forth mouse/touch tracking for interactive rustling with falling leaves.
 
 import BaseEffect from '../../../js/base-effect.js';
+import FoliageParticleEmitter from './foliage-particle-emitter.js';
 import * as THREE from 'https://unpkg.com/three@0.172.0/build/three.module.js';
 
 const log = (...args) => {
@@ -10,6 +11,8 @@ const log = (...args) => {
         console.log(...args);
     }
 };
+
+const MAX_RUSTLE_INSTANCES = 6;
 
 const FRAGMENT_SHADER = `
     uniform sampler2D map;
@@ -27,11 +30,61 @@ const FRAGMENT_SHADER = `
     uniform float sharpness;
     uniform vec2 texelSize;
 
-    // Envelope + direction (driven from JS each frame)
     uniform float windEnvelope;
     uniform vec2 windDirection;
 
+    // Rustle interaction (per-slot for WebGL 1)
+    uniform float rustleEnabled;
+    uniform float rustleStrength;
+    uniform float rustleRadius;
+    uniform int rustleInstanceCount;
+    uniform vec2 rustlePos0;
+    uniform vec2 rustlePos1;
+    uniform vec2 rustlePos2;
+    uniform vec2 rustlePos3;
+    uniform vec2 rustlePos4;
+    uniform vec2 rustlePos5;
+    uniform vec2 rustleVel0;
+    uniform vec2 rustleVel1;
+    uniform vec2 rustleVel2;
+    uniform vec2 rustleVel3;
+    uniform vec2 rustleVel4;
+    uniform vec2 rustleVel5;
+    uniform float rustleIntensity0;
+    uniform float rustleIntensity1;
+    uniform float rustleIntensity2;
+    uniform float rustleIntensity3;
+    uniform float rustleIntensity4;
+    uniform float rustleIntensity5;
+    uniform float rustleAlpha0;
+    uniform float rustleAlpha1;
+    uniform float rustleAlpha2;
+    uniform float rustleAlpha3;
+    uniform float rustleAlpha4;
+    uniform float rustleAlpha5;
+
     varying vec2 vUv;
+
+    // Returns vec3(displaceX, displaceY, weight) - weight used to suppress ambient
+    // vel carries branch sway state, not raw mouse velocity.
+    vec3 rustleContrib(vec2 pos, vec2 vel, float intensity, float alpha) {
+        if (alpha <= 0.001 || intensity <= 0.001) return vec3(0.0);
+        vec2 toFrag = vUv - pos;
+        float dist = length(toFrag);
+        if (dist >= rustleRadius || dist < 0.0002) return vec3(0.0);
+
+        float normDist = dist / rustleRadius;
+        float falloff = exp(-4.0 * normDist * normDist);
+
+        float swayMag = length(vel);
+        if (swayMag < 0.0002) return vec3(0.0, 0.0, falloff * intensity * alpha);
+        vec2 pushDir = vel / swayMag;
+        float swayAmount = smoothstep(0.0, 0.06, swayMag);
+
+        float w = falloff * intensity * alpha;
+        vec2 disp = pushDir * swayAmount * w * rustleStrength;
+        return vec3(disp, w);
+    }
 
     void main() {
         float maskValue = texture2D(maskMap, vUv).r;
@@ -41,6 +94,7 @@ const FRAGMENT_SHADER = `
         float influence = pow(normalized, max(0.01, influenceCurve));
         if (influence <= 0.001) discard;
 
+        // Ambient wind
         float env = windEnvelope;
         float effectiveStrength = windStrength * env;
         float effectiveGust = gustStrength * env;
@@ -58,9 +112,25 @@ const FRAGMENT_SHADER = `
 
         vec2 dir = normalize(windDirection + vec2(0.0001));
         vec2 perp = vec2(-dir.y, dir.x);
-        vec2 drift = dir * waveMag + perp * wavePerp;
+        vec2 ambientDrift = dir * waveMag + perp * wavePerp;
 
-        vec2 displacedUv = clamp(vUv + drift * influence, vec2(0.0), vec2(1.0));
+        // Rustle interaction — accumulate displacement + weight
+        vec2 rustleDrift = vec2(0.0);
+        float rustleWeight = 0.0;
+        if (rustleEnabled > 0.5 && rustleInstanceCount > 0) {
+            vec3 r;
+            if (rustleInstanceCount > 0) { r = rustleContrib(rustlePos0, rustleVel0, rustleIntensity0, rustleAlpha0); rustleDrift += r.xy; rustleWeight = max(rustleWeight, r.z); }
+            if (rustleInstanceCount > 1) { r = rustleContrib(rustlePos1, rustleVel1, rustleIntensity1, rustleAlpha1); rustleDrift += r.xy; rustleWeight = max(rustleWeight, r.z); }
+            if (rustleInstanceCount > 2) { r = rustleContrib(rustlePos2, rustleVel2, rustleIntensity2, rustleAlpha2); rustleDrift += r.xy; rustleWeight = max(rustleWeight, r.z); }
+            if (rustleInstanceCount > 3) { r = rustleContrib(rustlePos3, rustleVel3, rustleIntensity3, rustleAlpha3); rustleDrift += r.xy; rustleWeight = max(rustleWeight, r.z); }
+            if (rustleInstanceCount > 4) { r = rustleContrib(rustlePos4, rustleVel4, rustleIntensity4, rustleAlpha4); rustleDrift += r.xy; rustleWeight = max(rustleWeight, r.z); }
+            if (rustleInstanceCount > 5) { r = rustleContrib(rustlePos5, rustleVel5, rustleIntensity5, rustleAlpha5); rustleDrift += r.xy; rustleWeight = max(rustleWeight, r.z); }
+        }
+
+        // Suppress ambient wind where rustle is active; as rustle fades, ambient returns
+        float ambientFade = 1.0 - clamp(rustleWeight, 0.0, 1.0);
+        vec2 totalDrift = ambientDrift * ambientFade + rustleDrift;
+        vec2 displacedUv = clamp(vUv + totalDrift * influence, vec2(0.0), vec2(1.0));
         vec4 baseColor = texture2D(map, vUv);
         vec4 displacedColor = texture2D(map, displacedUv);
 
@@ -124,6 +194,45 @@ class FoliageWindEffect extends BaseEffect {
         this._speedJitter = 0;
         this._speedJitterTarget = 0;
         this._speedJitterTimer = 0;
+
+        // Rustle interaction state
+        this.rustleInstances = [];
+        this.maxRustleInstances = MAX_RUSTLE_INSTANCES;
+        this.rustleIntensity = 0;
+        this._lastMouseUV = new THREE.Vector2(-1, -1);
+        this._lastVelocity = new THREE.Vector2(0, 0);
+        this._velocityBuffer = [];
+        this._velocityBufferSize = 5;
+        this._directionReversals = 0;
+        this._reversalDecayTimer = 0;
+        this._lastEmitTime = 0;
+
+        // Raycaster for mouse-to-UV
+        this._raycaster = new THREE.Raycaster();
+        this._mouse = new THREE.Vector2();
+        this._mousePixelX = 0;
+        this._mousePixelY = 0;
+        this._isTouching = false;
+        this._cachedRect = null;
+        this._cachedRectFrame = -1;
+
+        // Mask sampler for hit-testing
+        this.maskSampler = null;
+
+        // Particle emitter
+        this.particleEmitter = null;
+
+        // Uniform name lists (avoid per-frame string creation)
+        this._rustlePosList = [];
+        this._rustleVelList = [];
+        this._rustleIntensityList = [];
+        this._rustleAlphaList = [];
+        for (let i = 0; i < MAX_RUSTLE_INSTANCES; i++) {
+            this._rustlePosList.push(`rustlePos${i}`);
+            this._rustleVelList.push(`rustleVel${i}`);
+            this._rustleIntensityList.push(`rustleIntensity${i}`);
+            this._rustleAlphaList.push(`rustleAlpha${i}`);
+        }
     }
 
     getConfig() {
@@ -132,6 +241,17 @@ class FoliageWindEffect extends BaseEffect {
         this._cachedConfigFrame = this._frameCounter;
         return this._cachedConfig;
     }
+
+    _getCanvasRect() {
+        if (this._cachedRectFrame === this._frameCounter) return this._cachedRect;
+        if (this.parallax?.canvas) {
+            this._cachedRect = this.parallax.canvas.getBoundingClientRect();
+        }
+        this._cachedRectFrame = this._frameCounter;
+        return this._cachedRect;
+    }
+
+    _invalidateRectCache() { this._cachedRectFrame = -1; }
 
     _getEnvelopeConfig() {
         const config = this.getConfig();
@@ -189,7 +309,6 @@ class FoliageWindEffect extends BaseEffect {
                 if (progress >= 1) this._initEnvelopeState(WIND_STATE.CALM);
                 break;
             case WIND_STATE.CALM:
-                // Hold at current calm level
                 if (progress >= 1) this._initEnvelopeState(WIND_STATE.RISING);
                 break;
             case WIND_STATE.RISING:
@@ -209,6 +328,330 @@ class FoliageWindEffect extends BaseEffect {
         this._speedJitter += (this._speedJitterTarget - this._speedJitter) * Math.min(1, dt * 3);
     }
 
+    // --- Mask sampler ---
+    _buildMaskSampler(maskTexture) {
+        const img = maskTexture?.image;
+        if (!img) return null;
+        const w = img.width || img.naturalWidth;
+        const h = img.height || img.naturalHeight;
+        if (!w || !h) return null;
+        const canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return null;
+        ctx.drawImage(img, 0, 0);
+        try {
+            return { width: w, height: h, data: ctx.getImageData(0, 0, w, h).data };
+        } catch (e) {
+            return null;
+        }
+    }
+
+    _isUVOverFoliage(u, v) {
+        if (!this.maskSampler?.data) return false;
+        const { width, height, data } = this.maskSampler;
+        const x = Math.floor(Math.max(0, Math.min(1, u)) * (width - 1));
+        const y = Math.floor((1 - Math.max(0, Math.min(1, v))) * (height - 1));
+        return data[(y * width + x) * 4] / 255 > 0.01;
+    }
+
+    // --- Mouse tracking ---
+    _setupMouseTracking() {
+        if (!this.parallax?.canvas) return;
+        const canvas = this.parallax.canvas;
+
+        if (this._mouseMoveHandler) canvas.removeEventListener('mousemove', this._mouseMoveHandler);
+        if (this._touchMoveHandler) canvas.removeEventListener('touchmove', this._touchMoveHandler);
+        if (this._touchEndHandler) {
+            canvas.removeEventListener('touchend', this._touchEndHandler);
+            canvas.removeEventListener('touchcancel', this._touchEndHandler);
+        }
+        if (this._resizeHandler) window.removeEventListener('resize', this._resizeHandler);
+        if (this._scrollHandler) window.removeEventListener('scroll', this._scrollHandler);
+
+        this._mouseMoveHandler = (e) => {
+            const rect = this._getCanvasRect();
+            if (!rect) return;
+            this._mousePixelX = e.clientX - rect.left;
+            this._mousePixelY = e.clientY - rect.top;
+            this._isTouching = false;
+        };
+
+        this._touchMoveHandler = (e) => {
+            e.preventDefault();
+            if (e.touches.length > 0) {
+                const rect = this._getCanvasRect();
+                if (!rect) return;
+                this._mousePixelX = e.touches[0].clientX - rect.left;
+                this._mousePixelY = e.touches[0].clientY - rect.top;
+                this._isTouching = true;
+            }
+        };
+
+        this._touchEndHandler = () => { this._isTouching = false; };
+        this._resizeHandler = () => this._invalidateRectCache();
+        this._scrollHandler = () => this._invalidateRectCache();
+
+        canvas.addEventListener('mousemove', this._mouseMoveHandler);
+        canvas.addEventListener('touchmove', this._touchMoveHandler, { passive: false });
+        canvas.addEventListener('touchend', this._touchEndHandler);
+        canvas.addEventListener('touchcancel', this._touchEndHandler);
+        window.addEventListener('resize', this._resizeHandler);
+        window.addEventListener('scroll', this._scrollHandler, { passive: true });
+    }
+
+    _getMouseUV() {
+        if (!this.parallax?.canvas || !this.overlayMesh) return null;
+        const rect = this._getCanvasRect();
+        if (!rect) return null;
+        this._mouse.x = ((this._mousePixelX / rect.width) * 2) - 1;
+        this._mouse.y = -((this._mousePixelY / rect.height) * 2) + 1;
+        this._raycaster.setFromCamera(this._mouse, this.camera);
+        const hits = this._raycaster.intersectObject(this.overlayMesh);
+        if (hits.length > 0 && hits[0].uv) return hits[0].uv.clone();
+        return null;
+    }
+
+    _getWorldPosAtPixel(px, py) {
+        if (!this.parallax?.canvas || !this.overlayMesh) return null;
+        const rect = this._getCanvasRect();
+        if (!rect) return null;
+        this._mouse.x = ((px / rect.width) * 2) - 1;
+        this._mouse.y = -((py / rect.height) * 2) + 1;
+        this._raycaster.setFromCamera(this._mouse, this.camera);
+        const hits = this._raycaster.intersectObject(this.overlayMesh);
+        if (hits.length > 0) return hits[0].point.clone();
+        return null;
+    }
+
+    // --- Rustle interaction ---
+    _updateRustleInteraction(dt) {
+        if (!this.uniforms || !this.parallax || !this.overlayMesh) return;
+
+        const rustleFlag = this.parallax.getFlag('effects.foliage-wind.rustleInteraction');
+        const rustleConfig = this.getConfig().rustleInteraction || {};
+        const shouldBeEnabled = rustleFlag && rustleConfig.enabled !== false;
+
+        this.uniforms.rustleEnabled.value = shouldBeEnabled ? 1.0 : 0.0;
+        if (!shouldBeEnabled) {
+            this.rustleInstances = [];
+            this.rustleIntensity = 0;
+            this._directionReversals = 0;
+            this._updateRustleUniforms();
+            return;
+        }
+
+        const velThreshold = rustleConfig.velocityThreshold ?? 0.5;
+        const reversalThreshold = Math.max(1, rustleConfig.reversalThreshold ?? 2);
+
+        // --- Track velocity GLOBALLY (regardless of mask) ---
+        const inputActive = this.parallax.mouseOnScreen || this._isTouching;
+        let currentUV = null;
+        let isOverFoliage = false;
+        const currentVelocity = new THREE.Vector2(0, 0);
+
+        if (inputActive) {
+            const mouseUV = this._getMouseUV();
+            if (mouseUV && mouseUV.x >= 0 && mouseUV.x <= 1 && mouseUV.y >= 0 && mouseUV.y <= 1) {
+                if (this._isUVOverFoliage(mouseUV.x, mouseUV.y)) {
+                    isOverFoliage = true;
+                    currentUV = mouseUV;
+                }
+
+                // Velocity computed from all mouse movement, not just over foliage
+                if (this._lastMouseUV.x >= 0) {
+                    const dx = mouseUV.x - this._lastMouseUV.x;
+                    const dy = mouseUV.y - this._lastMouseUV.y;
+                    const velocityScale = 1.0 / Math.max(dt, 0.001);
+                    currentVelocity.set(dx * velocityScale, dy * velocityScale);
+                    currentVelocity.clampLength(0, 10.0);
+                }
+                this._lastMouseUV.copy(mouseUV);
+            }
+        } else {
+            this._lastMouseUV.set(-1, -1);
+        }
+
+        const speed = currentVelocity.length();
+
+        // --- Reversal detection runs globally (not gated by mask) ---
+        if (speed > velThreshold && this._lastVelocity.lengthSq() > 0.0001) {
+            const dot = currentVelocity.dot(this._lastVelocity) / (speed * this._lastVelocity.length());
+            if (dot < -(rustleConfig.reversalDotThreshold ?? 0.3)) {
+                this._directionReversals += 1;
+            }
+        }
+        if (speed > velThreshold) {
+            this._lastVelocity.copy(currentVelocity);
+        }
+
+        // Decay reversals over time
+        const decayRate = rustleConfig.decayRate ?? 3.0;
+        this._reversalDecayTimer += dt;
+        if (this._reversalDecayTimer > 0.1) {
+            this._directionReversals = Math.max(0, this._directionReversals - decayRate * this._reversalDecayTimer);
+            this._reversalDecayTimer = 0;
+        }
+
+        // Decay intensity continuously
+        this.rustleIntensity = Math.max(0, this.rustleIntensity - (rustleConfig.intensityDecay ?? 2.0) * dt);
+
+        // --- Apply rustle only when over foliage AND reversals are sufficient ---
+        const rustleActive = this._directionReversals >= reversalThreshold;
+        if (isOverFoliage && currentUV && rustleActive && speed > velThreshold) {
+            const intensityGain = speed * (rustleConfig.intensityGain ?? 1.5);
+            this.rustleIntensity = Math.min(
+                rustleConfig.maxIntensity ?? 1.0,
+                this.rustleIntensity + intensityGain * dt
+            );
+
+            this._spawnOrUpdateRustle(currentUV, this.rustleIntensity, currentVelocity);
+
+            const leafThreshold = rustleConfig.leafThreshold ?? 0.3;
+            if (this.rustleIntensity >= leafThreshold && this.particleEmitter) {
+                const leafConfig = this.getConfig().leafParticles || {};
+                const spawnInterval = leafConfig.spawnInterval ?? 0.15;
+                if (this.time - this._lastEmitTime >= spawnInterval) {
+                    this._lastEmitTime = this.time;
+                    const worldPos = this._getWorldPosAtPixel(this._mousePixelX, this._mousePixelY);
+                    if (worldPos) {
+                        worldPos.z += 0.02;
+                        const maxI = rustleConfig.maxIntensity ?? 1.0;
+                        const intensityFactor = (this.rustleIntensity - leafThreshold) / Math.max(0.01, maxI - leafThreshold);
+                        this.particleEmitter.emitLeaves(worldPos, {
+                            countMin: leafConfig.countMin ?? 1,
+                            countMax: Math.round((leafConfig.countMax ?? 3) * (0.5 + intensityFactor * 0.5)),
+                            scaleMin: leafConfig.scaleMin ?? 0.02,
+                            scaleMax: leafConfig.scaleMax ?? 0.06,
+                            lifetimeMin: leafConfig.lifetimeMin ?? 2.0,
+                            lifetimeMax: leafConfig.lifetimeMax ?? 4.5,
+                            fallSpeedMin: leafConfig.fallSpeedMin ?? 0.15,
+                            fallSpeedMax: leafConfig.fallSpeedMax ?? 0.4,
+                            driftSpeed: leafConfig.driftSpeed ?? 0.08,
+                            swayAmpMin: leafConfig.swayAmpMin ?? 0.05,
+                            swayAmpMax: leafConfig.swayAmpMax ?? 0.2,
+                            swayFreqMin: leafConfig.swayFreqMin ?? 1.5,
+                            swayFreqMax: leafConfig.swayFreqMax ?? 3.5,
+                            spinMin: leafConfig.spinMin ?? 1.0,
+                            spinMax: leafConfig.spinMax ?? 4.0,
+                            opacity: leafConfig.opacity ?? 0.9,
+                            ejectSpeed: leafConfig.ejectSpeed ?? 0.3
+                        });
+                    }
+                }
+            }
+        }
+
+        this._updateRustleInstances(dt);
+        this._updateRustleUniforms();
+    }
+
+    _spawnOrUpdateRustle(uv, intensity, velocity) {
+        const rustleConfig = this.getConfig().rustleInteraction || {};
+        const impulseGain = rustleConfig.impulseGain ?? 0.006;
+        const maxSwayVelocity = rustleConfig.maxSwayVelocity ?? 0.08;
+
+        let nearest = null;
+        let nearestDist = Infinity;
+        for (const inst of this.rustleInstances) {
+            const d = inst.position.distanceTo(uv);
+            if (d < nearestDist) { nearestDist = d; nearest = inst; }
+        }
+
+        const mergeRadius = 0.05;
+        if (nearest && nearestDist < mergeRadius) {
+            nearest.position.copy(uv);
+            nearest.intensity = Math.max(nearest.intensity, intensity);
+            nearest.velocity.copy(velocity);
+            // Mouse injects impulse; branch sway evolves in update loop.
+            nearest.swayVelocity.addScaledVector(velocity, impulseGain);
+            nearest.swayVelocity.clampLength(0, maxSwayVelocity);
+            nearest.alpha = 1.0;
+            nearest.targetAlpha = 1.0;
+            nearest.touchTime = this.time;
+            return;
+        }
+
+        let wi = 0;
+        for (let i = 0; i < this.rustleInstances.length; i++) {
+            if (this.rustleInstances[i].alpha > 0.001) {
+                this.rustleInstances[wi++] = this.rustleInstances[i];
+            }
+        }
+        this.rustleInstances.length = wi;
+
+        const inst = {
+            position: uv.clone(),
+            velocity: velocity.clone(),
+            sway: new THREE.Vector2(0, 0),
+            swayVelocity: velocity.clone().multiplyScalar(impulseGain).clampLength(0, maxSwayVelocity),
+            intensity,
+            alpha: 1.0,
+            targetAlpha: 1.0,
+            touchTime: this.time
+        };
+        this.rustleInstances.push(inst);
+
+        if (this.rustleInstances.length > this.maxRustleInstances) {
+            this.rustleInstances.shift();
+        }
+    }
+
+    _updateRustleInstances(dt) {
+        const rustleConfig = this.getConfig().rustleInteraction || {};
+        const fadeSpeed = rustleConfig.fadeOutSpeed ?? 1.5;
+        const branchStiffness = rustleConfig.branchStiffness ?? 14.0;
+        const branchDamping = rustleConfig.branchDamping ?? 7.0;
+        const maxSway = rustleConfig.maxSway ?? 0.05;
+        let wi = 0;
+        for (let i = 0; i < this.rustleInstances.length; i++) {
+            const inst = this.rustleInstances[i];
+            const age = this.time - inst.touchTime;
+            if (age > 0.1) {
+                inst.targetAlpha = 0;
+            }
+
+            // Damped spring branch model:
+            // sway'' = -k * sway - c * sway'
+            inst.swayVelocity.x += (-branchStiffness * inst.sway.x - branchDamping * inst.swayVelocity.x) * dt;
+            inst.swayVelocity.y += (-branchStiffness * inst.sway.y - branchDamping * inst.swayVelocity.y) * dt;
+            inst.sway.x += inst.swayVelocity.x * dt;
+            inst.sway.y += inst.swayVelocity.y * dt;
+            inst.sway.clampLength(0, maxSway);
+
+            if (inst.targetAlpha === 0) {
+                inst.alpha = Math.max(0, inst.alpha - fadeSpeed * dt);
+                inst.intensity = Math.max(0, inst.intensity - fadeSpeed * dt);
+            }
+            if (inst.alpha > 0.001) {
+                this.rustleInstances[wi++] = inst;
+            }
+        }
+        this.rustleInstances.length = wi;
+    }
+
+    _updateRustleUniforms() {
+        if (!this.uniforms) return;
+        const count = Math.min(this.rustleInstances.length, this.maxRustleInstances);
+        this.uniforms.rustleInstanceCount.value = count;
+        for (let i = 0; i < this.maxRustleInstances; i++) {
+            if (i < count) {
+                const inst = this.rustleInstances[i];
+                this.uniforms[this._rustlePosList[i]].value.copy(inst.position);
+                this.uniforms[this._rustleVelList[i]].value.copy(inst.sway);
+                this.uniforms[this._rustleIntensityList[i]].value = inst.intensity;
+                this.uniforms[this._rustleAlphaList[i]].value = inst.alpha;
+            } else {
+                this.uniforms[this._rustlePosList[i]].value.set(-1, -1);
+                this.uniforms[this._rustleVelList[i]].value.set(0, 0);
+                this.uniforms[this._rustleIntensityList[i]].value = 0;
+                this.uniforms[this._rustleAlphaList[i]].value = 0;
+            }
+        }
+    }
+
+    // --- Init ---
     async init() {
         if (this.isInitialized) return;
 
@@ -243,7 +686,19 @@ class FoliageWindEffect extends BaseEffect {
             if (!this.maskTexture) this.maskTexture = maskTexture;
             this.textures.push(maskTexture);
 
+            // Deferred mask sampler build
+            if (!this.maskSampler || this.maskSampler.maskTexture !== maskTexture) {
+                this.maskSampler = null;
+                const buildSampler = () => { this.maskSampler = this._buildMaskSampler(maskTexture); };
+                if (typeof requestIdleCallback !== 'undefined') {
+                    requestIdleCallback(buildSampler, { timeout: 500 });
+                } else {
+                    setTimeout(buildSampler, 0);
+                }
+            }
+
             const dirAngle = (config.windDirection ?? 0) * Math.PI / 180;
+            const rustleConfig = config.rustleInteraction || {};
 
             this.uniforms = {
                 map: { value: this.parallax.imageTexture },
@@ -264,8 +719,21 @@ class FoliageWindEffect extends BaseEffect {
                     1 / Math.max(1, maskTexture.image?.height || 2048)
                 ) },
                 windEnvelope: { value: 1.0 },
-                windDirection: { value: new THREE.Vector2(Math.cos(dirAngle), Math.sin(dirAngle)) }
+                windDirection: { value: new THREE.Vector2(Math.cos(dirAngle), Math.sin(dirAngle)) },
+                // Rustle uniforms
+                rustleEnabled: { value: 0.0 },
+                rustleStrength: { value: rustleConfig.strength ?? 0.008 },
+                rustleRadius: { value: rustleConfig.radius ?? 0.08 },
+                rustleInstanceCount: { value: 0 }
             };
+
+            // Per-slot rustle instance uniforms
+            for (let i = 0; i < MAX_RUSTLE_INSTANCES; i++) {
+                this.uniforms[this._rustlePosList[i]] = { value: new THREE.Vector2(-1, -1) };
+                this.uniforms[this._rustleVelList[i]] = { value: new THREE.Vector2(0, 0) };
+                this.uniforms[this._rustleIntensityList[i]] = { value: 0 };
+                this.uniforms[this._rustleAlphaList[i]] = { value: 0 };
+            }
 
             this._baseWindSpeed = config.windSpeed ?? 0.25;
             this._initEnvelopeState(WIND_STATE.BLOWING);
@@ -280,6 +748,15 @@ class FoliageWindEffect extends BaseEffect {
                 }
             );
             this.overlayMesh.position.z = 0.012;
+
+            // Particle emitter for falling leaves
+            const leafConfig = config.leafParticles || {};
+            if (leafConfig.enabled !== false && !this.particleEmitter) {
+                this.particleEmitter = new FoliageParticleEmitter(this.scene, this.camera, this.renderer, basePath);
+            }
+
+            // Mouse tracking
+            this._setupMouseTracking();
 
             this.isInitialized = true;
             log('FoliageWindEffect: Initialized successfully');
@@ -309,7 +786,12 @@ class FoliageWindEffect extends BaseEffect {
         this.uniforms.minInfluence.value = config.minInfluence ?? this.uniforms.minInfluence.value;
         this.uniforms.sharpness.value = config.sharpness ?? this.uniforms.sharpness.value;
 
-        // Wind direction (degrees in config -> vec2)
+        // Rustle config hot-reload
+        const rustleConfig = config.rustleInteraction || {};
+        this.uniforms.rustleStrength.value = rustleConfig.strength ?? this.uniforms.rustleStrength.value;
+        this.uniforms.rustleRadius.value = rustleConfig.radius ?? this.uniforms.rustleRadius.value;
+
+        // Wind direction
         const dirAngle = (config.windDirection ?? 0) * Math.PI / 180;
         this.uniforms.windDirection.value.set(Math.cos(dirAngle), Math.sin(dirAngle));
 
@@ -321,11 +803,44 @@ class FoliageWindEffect extends BaseEffect {
         this._updateSpeedVariation(dt);
         this.uniforms.windSpeed.value = this._baseWindSpeed * (1 + this._speedJitter);
 
+        // Rustle interaction
+        this._updateRustleInteraction(dt);
+
+        // Particle emitter
+        if (this.particleEmitter) {
+            const leafConfig = config.leafParticles || {};
+            this.particleEmitter.update(dt, leafConfig.gravity ?? 0.15);
+        }
+
         this.syncWithParallaxMesh(this.overlayMesh);
         this.overlayMesh.position.z = 0.012;
     }
 
     cleanup() {
+        // Remove event listeners
+        if (this.parallax?.canvas) {
+            const canvas = this.parallax.canvas;
+            if (this._mouseMoveHandler) canvas.removeEventListener('mousemove', this._mouseMoveHandler);
+            if (this._touchMoveHandler) canvas.removeEventListener('touchmove', this._touchMoveHandler);
+            if (this._touchEndHandler) {
+                canvas.removeEventListener('touchend', this._touchEndHandler);
+                canvas.removeEventListener('touchcancel', this._touchEndHandler);
+            }
+        }
+        if (this._resizeHandler) window.removeEventListener('resize', this._resizeHandler);
+        if (this._scrollHandler) window.removeEventListener('scroll', this._scrollHandler);
+        this._mouseMoveHandler = null;
+        this._touchMoveHandler = null;
+        this._touchEndHandler = null;
+        this._resizeHandler = null;
+        this._scrollHandler = null;
+
+        if (this.particleEmitter) {
+            this.particleEmitter.cleanup();
+            this.particleEmitter = null;
+        }
+
+        this.rustleInstances = [];
         this.overlayMesh = null;
         this.uniforms = null;
         this._cachedConfig = null;

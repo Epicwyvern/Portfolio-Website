@@ -40,7 +40,8 @@
             "splooshInteraction": true
         },
         "foliage-wind": {
-            "enabled": true
+            "enabled": true,
+            "rustleInteraction": true
         },
         "screen-vignette": {
             "enabled": true
