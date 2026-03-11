@@ -153,6 +153,9 @@ class FoliageParticleEmitter {
         const spinMax = config.spinMax ?? 4.0;
         const opacity = config.opacity ?? 0.9;
         const ejectSpeed = config.ejectSpeed ?? 0.3;
+        const windDirection = config.windDirection || null; // THREE.Vector2 in UV-like direction
+        const windPush = config.windPush ?? 0.0;
+        const windDriftZ = config.windDriftZ ?? 0.12;
 
         for (let i = 0; i < count; i++) {
             const matIdx = Math.floor(Math.random() * this.leafMaterials.length);
@@ -163,10 +166,12 @@ class FoliageParticleEmitter {
 
             const angle = Math.random() * Math.PI * 2;
             const eject = this._randRange(0, ejectSpeed);
+            const windX = windDirection ? windDirection.x * windPush : 0;
+            const windZ = windDirection ? windDirection.y * windPush * windDriftZ : 0;
             p.velocity.set(
-                Math.cos(angle) * eject + this._randRange(-driftSpeed, driftSpeed),
+                Math.cos(angle) * eject + this._randRange(-driftSpeed, driftSpeed) + windX,
                 -this._randRange(fallSpeedMin, fallSpeedMax),
-                Math.sin(angle) * eject * 0.1
+                Math.sin(angle) * eject * 0.1 + windZ
             );
 
             p.age = 0;

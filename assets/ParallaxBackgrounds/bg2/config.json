@@ -374,6 +374,19 @@
           "movementFactor": 0.1,
           "blendMode": "AdditiveBlending",
           "enableRotation": false
+        }, 
+        {
+          "name": "Lan24",
+          "position": { "x": 0.765, "y": 0.708, "z": 0.38},
+          "scale": 1.0,
+          "opacity": 0.5,
+          "growthSpeed": 1.5,
+          "count": 4,
+          "lifetime": 2.5,
+          "newParticleSpeed": 1.2,
+          "movementFactor": 1,
+          "blendMode": "AdditiveBlending",
+          "enableRotation": false
         }
       ]
     },
@@ -466,13 +479,13 @@
         "velocityThreshold": 0.5,
         "reversalDotThreshold": 0.001,
         "reversalThreshold": 2,
-        "intensityGain": 0.5,
+        "intensityGain": 0.3,
         "intensityDecay": 0.05,
         "maxIntensity": 0.7,
         "decayRate": 3.0,
         "fadeOutSpeed": 1.5,
         "impulseGain": 0.06,
-        "branchStiffness": 300,
+        "branchStiffness": 600,
         "branchDamping": 10,
         "maxSway": 0.05,
         "maxSwayVelocity": 0.08,
@@ -498,7 +511,19 @@
         "spinMin": 1.0,
         "spinMax": 4.0,
         "opacity": 0.9,
-        "ejectSpeed": 0.3
+        "ejectSpeed": 0.3,
+        "ambientWind": {
+          "enabled": true,
+          "minWindEnvelope": 0.55,
+          "spawnInterval": [0.2, 0.8],
+          "countMin": 1,
+          "countMax": 2,
+          "emitAttempts": 40,
+          "ejectSpeed": 0.08,
+          "windPush": 0.08,
+          "windDriftZ": 0.12,
+          "opacityMultiplier": 0.9
+        }
       }
     },
     "screenVignette": {

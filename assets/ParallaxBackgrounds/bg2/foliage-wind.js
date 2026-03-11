@@ -206,6 +206,7 @@ class FoliageWindEffect extends BaseEffect {
         this._directionReversals = 0;
         this._reversalDecayTimer = 0;
         this._lastEmitTime = 0;
+        this._ambientLeafTimer = 0;
 
         // Raycaster for mouse-to-UV
         this._raycaster = new THREE.Raycaster();
@@ -354,6 +355,138 @@ class FoliageWindEffect extends BaseEffect {
         const x = Math.floor(Math.max(0, Math.min(1, u)) * (width - 1));
         const y = Math.floor((1 - Math.max(0, Math.min(1, v))) * (height - 1));
         return data[(y * width + x) * 4] / 255 > 0.01;
+    }
+
+    _getRandomFoliageSpawn(maxAttempts = 32) {
+        const rect = this._getCanvasRect();
+        if (!rect || !this.maskSampler?.data) return null;
+
+        for (let i = 0; i < maxAttempts; i++) {
+            const u = Math.random();
+            const v = Math.random();
+            if (!this._isUVOverFoliage(u, v)) continue;
+            const px = u * rect.width;
+            const py = (1 - v) * rect.height;
+            const worldPos = this._getWorldPosAtPixel(px, py);
+            if (worldPos) return { worldPos, uv: new THREE.Vector2(u, v) };
+        }
+        return null;
+    }
+
+    _getAmbientPeakDriftMagnitude() {
+        // Peak amplitude from configured strengths at full envelope (env = 1).
+        const config = this.getConfig();
+        const windStrength = Math.max(0, config.windStrength ?? 0.0025);
+        const gustStrength = Math.max(0, config.gustStrength ?? 0.001);
+        const maxWaveMag = windStrength + gustStrength;
+        const maxWavePerp = windStrength * 0.45 + gustStrength * 0.35;
+        return Math.max(1e-6, Math.hypot(maxWaveMag, maxWavePerp));
+    }
+
+    _getAmbientDriftAtUV(uv) {
+        // Match shader-side ambient field so ambient leaves follow foliage motion.
+        const config = this.getConfig();
+        const t = this.time * (this.uniforms?.windSpeed?.value ?? config.windSpeed ?? 0.25);
+        const primaryScale = config.primaryScale ?? 1.5;
+        const secondaryScale = config.secondaryScale ?? 6.0;
+        const gustScale = config.gustScale ?? 1.8;
+        const windStrength = (config.windStrength ?? 0.0025) * this._envValue;
+        const gustStrength = (config.gustStrength ?? 0.001) * this._envValue;
+
+        const phaseA = Math.sin((uv.y * primaryScale + t) * 6.2831853);
+        const phaseB = Math.sin((uv.x * secondaryScale - t * 0.73) * 6.2831853 + phaseA * 0.45);
+        const gustA = Math.sin(((uv.x + uv.y) * gustScale + t * 1.7) * 6.2831853);
+        const gustB = Math.sin((uv.x * (gustScale * 0.7) - uv.y * (gustScale * 1.3) + t * 1.1) * 6.2831853);
+
+        const waveMag = (phaseA * 0.65 + phaseB * 0.35) * windStrength
+                      + (gustA * 0.6 + gustB * 0.4) * gustStrength;
+        const wavePerp = phaseB * windStrength * 0.45
+                       + gustB * gustStrength * 0.35;
+
+        const dir = this.uniforms?.windDirection?.value?.clone() || new THREE.Vector2(1, 0);
+        if (dir.lengthSq() < 1e-6) dir.set(1, 0);
+        dir.normalize();
+        const perp = new THREE.Vector2(-dir.y, dir.x);
+
+        return dir.multiplyScalar(waveMag).add(perp.multiplyScalar(wavePerp));
+    }
+
+    _updateAmbientLeafFall(dt, config) {
+        if (!this.particleEmitter) return;
+
+        const leafConfig = config.leafParticles || {};
+        if (leafConfig.enabled === false) return;
+
+        const ambient = leafConfig.ambientWind || {};
+        if (ambient.enabled === false) return;
+
+        const localThreshold = Math.max(0, Math.min(1, ambient.minWindEnvelope ?? 0.82));
+        const peakDrift = this._getAmbientPeakDriftMagnitude();
+
+        this._ambientLeafTimer -= dt;
+        if (this._ambientLeafTimer > 0) return;
+
+        const intervalMin = ambient.spawnInterval?.[0] ?? 0.7;
+        const intervalMax = ambient.spawnInterval?.[1] ?? 1.8;
+        this._ambientLeafTimer = randRange(intervalMin, intervalMax);
+
+        // Pick a random foliage point where local ambient drift exceeds threshold.
+        let chosenWorldPos = null;
+        let chosenWindDir = null;
+        const attempts = Math.max(1, ambient.emitAttempts ?? 40);
+        const rect = this._getCanvasRect();
+        if (!rect) return;
+
+        for (let i = 0; i < attempts; i++) {
+            const u = Math.random();
+            const v = Math.random();
+            if (!this._isUVOverFoliage(u, v)) continue;
+
+            const uv = new THREE.Vector2(u, v);
+            const drift = this._getAmbientDriftAtUV(uv);
+            const localRatio = drift.length() / peakDrift;
+            if (localRatio < localThreshold) continue;
+
+            const worldPos = this._getWorldPosAtPixel(u * rect.width, (1 - v) * rect.height);
+            if (!worldPos) continue;
+
+            let windDir = drift.clone();
+            if (windDir.lengthSq() < 1e-8) {
+                const dir = this.uniforms?.windDirection?.value || new THREE.Vector2(1, 0);
+                windDir = dir.clone();
+            }
+            windDir.normalize();
+
+            chosenWorldPos = worldPos;
+            chosenWindDir = windDir;
+            break;
+        }
+
+        if (!chosenWorldPos || !chosenWindDir) return;
+        chosenWorldPos.z += 0.02;
+
+        this.particleEmitter.emitLeaves(chosenWorldPos, {
+            countMin: ambient.countMin ?? 1,
+            countMax: ambient.countMax ?? 1,
+            scaleMin: leafConfig.scaleMin ?? 0.02,
+            scaleMax: leafConfig.scaleMax ?? 0.06,
+            lifetimeMin: leafConfig.lifetimeMin ?? 2.0,
+            lifetimeMax: leafConfig.lifetimeMax ?? 4.5,
+            fallSpeedMin: leafConfig.fallSpeedMin ?? 0.15,
+            fallSpeedMax: leafConfig.fallSpeedMax ?? 0.4,
+            driftSpeed: leafConfig.driftSpeed ?? 0.08,
+            swayAmpMin: leafConfig.swayAmpMin ?? 0.05,
+            swayAmpMax: leafConfig.swayAmpMax ?? 0.2,
+            swayFreqMin: leafConfig.swayFreqMin ?? 1.5,
+            swayFreqMax: leafConfig.swayFreqMax ?? 3.5,
+            spinMin: leafConfig.spinMin ?? 1.0,
+            spinMax: leafConfig.spinMax ?? 4.0,
+            opacity: (ambient.opacityMultiplier ?? 0.9) * (leafConfig.opacity ?? 0.9),
+            ejectSpeed: ambient.ejectSpeed ?? 0.08,
+            windDirection: chosenWindDir,
+            windPush: ambient.windPush ?? 0.04,
+            windDriftZ: ambient.windDriftZ ?? 0.12
+        });
     }
 
     // --- Mouse tracking ---
@@ -811,6 +944,7 @@ class FoliageWindEffect extends BaseEffect {
             const leafConfig = config.leafParticles || {};
             this.particleEmitter.update(dt, leafConfig.gravity ?? 0.15);
         }
+        this._updateAmbientLeafFall(dt, config);
 
         this.syncWithParallaxMesh(this.overlayMesh);
         this.overlayMesh.position.z = 0.012;
