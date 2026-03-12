@@ -201,6 +201,7 @@ class FoliageWindEffect extends BaseEffect {
         this.rustleIntensity = 0;
         this._lastMouseUV = new THREE.Vector2(-1, -1);
         this._lastVelocity = new THREE.Vector2(0, 0);
+        this._effectiveVelocity = new THREE.Vector2(0, 0);
         this._lastUVWasOverFoliage = false;
         this._velocityBuffer = [];
         this._velocityBufferSize = 5;
@@ -582,6 +583,10 @@ class FoliageWindEffect extends BaseEffect {
         const velThreshold = rustleConfig.velocityThreshold ?? 0.5;
         const reversalThreshold = Math.max(1, rustleConfig.reversalThreshold ?? 2);
         const maxInputVelocity = Math.max(0.05, rustleConfig.maxInputVelocity ?? 4.0);
+        const minInputVelocity = Math.min(
+            maxInputVelocity,
+            Math.max(velThreshold, rustleConfig.minInputVelocity ?? velThreshold)
+        );
 
         const inputActive = this.parallax.mouseOnScreen || this._isTouching;
         let currentUV = null;
@@ -620,6 +625,12 @@ class FoliageWindEffect extends BaseEffect {
         }
 
         const speed = currentVelocity.length();
+        let effectiveSpeed = speed;
+        this._effectiveVelocity.set(0, 0);
+        if (speed > 0.0001) {
+            effectiveSpeed = Math.min(maxInputVelocity, Math.max(speed, minInputVelocity));
+            this._effectiveVelocity.copy(currentVelocity).multiplyScalar(effectiveSpeed / speed);
+        }
 
         // Count reversals only while continuously over foliage to avoid edge flicker noise.
         const canCountReversal = hasValidMouseUV && isOverFoliage && this._lastUVWasOverFoliage;
@@ -649,13 +660,13 @@ class FoliageWindEffect extends BaseEffect {
         // --- Apply rustle only when over foliage AND reversals are sufficient ---
         const rustleActive = this._directionReversals >= reversalThreshold;
         if (isOverFoliage && currentUV && rustleActive && speed > velThreshold) {
-            const intensityGain = speed * (rustleConfig.intensityGain ?? 1.5);
+            const intensityGain = effectiveSpeed * (rustleConfig.intensityGain ?? 1.5);
             this.rustleIntensity = Math.min(
                 rustleConfig.maxIntensity ?? 1.0,
                 this.rustleIntensity + intensityGain * dt
             );
 
-            this._spawnOrUpdateRustle(currentUV, this.rustleIntensity, currentVelocity);
+            this._spawnOrUpdateRustle(currentUV, this.rustleIntensity, this._effectiveVelocity);
 
             const leafThreshold = rustleConfig.leafThreshold ?? 0.3;
             if (this.rustleIntensity >= leafThreshold && this.particleEmitter) {
