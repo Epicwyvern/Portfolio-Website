@@ -81,6 +81,14 @@ const DEFAULT_FRAGMENT_SHADER = `
         ctAspect.y /= max(0.01, uVignetteVertical);
         float d = length(ctAspect);
 
+        // Skip expensive center work when no edge contribution is possible.
+        float minInner = min(uVignetteInner, uGlowInner);
+        float centerSafeMargin = abs(uFogWarpAmount) + 0.03;
+        if (d < (minInner - centerSafeMargin)) {
+            gl_FragColor = vec4(0.0);
+            return;
+        }
+
         vec2 fogDrift = vec2(uFogDriftX, uFogDriftY);
         float driftLen = length(fogDrift);
         if (driftLen < 0.001) {
@@ -102,6 +110,11 @@ const DEFAULT_FRAGMENT_SHADER = `
         float edge = 1.0 - vignette;
         float glowBand = smoothstep(uGlowInner, uGlowOuter, dWarped);
         float edgeGlowMask = max(edge, glowBand);
+
+        if (edgeGlowMask <= 0.0001) {
+            gl_FragColor = vec4(0.0);
+            return;
+        }
 
         float flicker = 1.0 + uFlickerAmount * (
             sin(uTime * uFlickerSpeed) * 0.5 +
@@ -274,24 +287,6 @@ class ScreenVignetteEffect extends BaseEffect {
         return Math.min(1, elapsed / dur);
     }
 
-    /**
-     * Returns lantern world positions for screen-space proximity. Uses cached enabled configs + mesh transform.
-     */
-    getLanternPositionsWorld() {
-        const t = this.parallax?.meshTransform;
-        const configs = this._enabledLanternConfigs ?? [];
-        if (!t || configs.length === 0) return [];
-        const mw = t.baseGeometrySize?.width * t.scale ?? 1;
-        const mh = t.baseGeometrySize?.height * t.scale ?? 1;
-        const positions = [];
-        for (const c of configs) {
-            const wx = (c.x - 0.5) * mw + t.position.x;
-            const wy = (c.y - 0.5) * mh + t.position.y;
-            positions.push(new THREE.Vector3(wx, wy, c.z));
-        }
-        return positions;
-    }
-
     setupMouseTracking() {
         const canvas = this.parallax?.canvas;
         if (!canvas) return;
@@ -339,12 +334,14 @@ class ScreenVignetteEffect extends BaseEffect {
             return { directionalGlows: [], innerBlendTarget: 0 };
         }
         const configs = this._enabledLanternConfigs ?? [];
-        const worldPositions = this.getLanternPositionsWorld();
-        if (configs.length === 0 || worldPositions.length === 0) {
+        const t = this.parallax?.meshTransform;
+        if (!t || configs.length === 0) {
             return { directionalGlows: [], innerBlendTarget: 0 };
         }
         const rect = this._getCanvasRect();
         if (!rect) return { directionalGlows: [], innerBlendTarget: 0 };
+        const mw = t.baseGeometrySize?.width * t.scale ?? 1;
+        const mh = t.baseGeometrySize?.height * t.scale ?? 1;
 
         const minDim = Math.min(rect.width, rect.height);
         const outerRadiusPixels = (cfg.outerRadiusPixels != null ? cfg.outerRadiusPixels : null)
@@ -363,12 +360,14 @@ class ScreenVignetteEffect extends BaseEffect {
         const directionalGlows = [];
         let maxInnerBlend = 0;
 
-        for (let i = 0; i < worldPositions.length; i++) {
-            const w = worldPositions[i];
+        for (let i = 0; i < configs.length; i++) {
             const c = configs[i];
+            const wx = (c.x - 0.5) * mw + t.position.x;
+            const wy = (c.y - 0.5) * mh + t.position.y;
+            const wz = c.z ?? 0.5;
             const fade = this._getLanternFadeFactor(c?.name);
             if (fade <= 0) continue;
-            _proj.copy(w).project(this.camera);
+            _proj.set(wx, wy, wz).project(this.camera);
             const px = (_proj.x * 0.5 + 0.5) * rect.width;
             const py = (0.5 - _proj.y * 0.5) * rect.height;
             const dx = mousePixelX - px;

@@ -25,6 +25,8 @@ class SimpleParallax {
                 focus: 0.25,                    // Camera Movement (Strafe ↔ Rotate)
                 baseMouseSensitivity: 0.5,     // Movement Range
                 devicePixelRatio: 1.0,         // Render Quality (Performance ↔ Quality)
+                antialias: true,               // MSAA on/off
+                preserveDrawingBuffer: false,  // Keep framebuffer after present (expensive)
                 expandDepthmapRadius: 7,        // Depth Map Expansion
                 depthmapSize: 1024,            // Max. Depth Map Size (Blocky ↔ Detailed)
                 
@@ -128,6 +130,8 @@ class SimpleParallax {
         this.devicePixelRatio = this.resolveDevicePixelRatio();
         this.expandDepthmapRadius = s.expandDepthmapRadius;
         this.depthmapSize = s.depthmapSize;
+        this.antialias = s.antialias !== false;
+        this.preserveDrawingBuffer = s.preserveDrawingBuffer === true;
         this.meshDepth = s.meshDepth;
         this.easing = s.easing;
         this.edgeWidth = s.edgeWidth;
@@ -688,8 +692,8 @@ class SimpleParallax {
         
         this.renderer = new THREE.WebGLRenderer({ 
             canvas: this.canvas,
-            antialias: true, 
-            preserveDrawingBuffer: true, 
+            antialias: this.antialias,
+            preserveDrawingBuffer: this.preserveDrawingBuffer,
             alpha: true,
             powerPreference: 'high-performance'
         });

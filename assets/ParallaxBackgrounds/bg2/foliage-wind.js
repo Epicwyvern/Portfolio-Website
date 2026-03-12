@@ -201,6 +201,7 @@ class FoliageWindEffect extends BaseEffect {
         this.rustleIntensity = 0;
         this._lastMouseUV = new THREE.Vector2(-1, -1);
         this._lastVelocity = new THREE.Vector2(0, 0);
+        this._lastUVWasOverFoliage = false;
         this._velocityBuffer = [];
         this._velocityBufferSize = 5;
         this._directionReversals = 0;
@@ -571,52 +572,67 @@ class FoliageWindEffect extends BaseEffect {
             this.rustleInstances = [];
             this.rustleIntensity = 0;
             this._directionReversals = 0;
+            this._lastVelocity.set(0, 0);
+            this._lastMouseUV.set(-1, -1);
+            this._lastUVWasOverFoliage = false;
             this._updateRustleUniforms();
             return;
         }
 
         const velThreshold = rustleConfig.velocityThreshold ?? 0.5;
         const reversalThreshold = Math.max(1, rustleConfig.reversalThreshold ?? 2);
+        const maxInputVelocity = Math.max(0.05, rustleConfig.maxInputVelocity ?? 4.0);
 
-        // --- Track velocity GLOBALLY (regardless of mask) ---
         const inputActive = this.parallax.mouseOnScreen || this._isTouching;
         let currentUV = null;
         let isOverFoliage = false;
+        let hasValidMouseUV = false;
         const currentVelocity = new THREE.Vector2(0, 0);
 
         if (inputActive) {
             const mouseUV = this._getMouseUV();
             if (mouseUV && mouseUV.x >= 0 && mouseUV.x <= 1 && mouseUV.y >= 0 && mouseUV.y <= 1) {
+                hasValidMouseUV = true;
                 if (this._isUVOverFoliage(mouseUV.x, mouseUV.y)) {
                     isOverFoliage = true;
                     currentUV = mouseUV;
                 }
 
-                // Velocity computed from all mouse movement, not just over foliage
+                // Use delta UV over time and cap velocity spikes from edge re-entry.
                 if (this._lastMouseUV.x >= 0) {
                     const dx = mouseUV.x - this._lastMouseUV.x;
                     const dy = mouseUV.y - this._lastMouseUV.y;
                     const velocityScale = 1.0 / Math.max(dt, 0.001);
                     currentVelocity.set(dx * velocityScale, dy * velocityScale);
-                    currentVelocity.clampLength(0, 10.0);
+                    currentVelocity.clampLength(0, maxInputVelocity);
                 }
                 this._lastMouseUV.copy(mouseUV);
+            } else {
+                // If raycast UV is invalid (often at edges), reset continuity state.
+                this._lastMouseUV.set(-1, -1);
+                this._lastVelocity.set(0, 0);
+                this._lastUVWasOverFoliage = false;
             }
         } else {
             this._lastMouseUV.set(-1, -1);
+            this._lastVelocity.set(0, 0);
+            this._lastUVWasOverFoliage = false;
         }
 
         const speed = currentVelocity.length();
 
-        // --- Reversal detection runs globally (not gated by mask) ---
-        if (speed > velThreshold && this._lastVelocity.lengthSq() > 0.0001) {
+        // Count reversals only while continuously over foliage to avoid edge flicker noise.
+        const canCountReversal = hasValidMouseUV && isOverFoliage && this._lastUVWasOverFoliage;
+        if (canCountReversal && speed > velThreshold && this._lastVelocity.lengthSq() > 0.0001) {
             const dot = currentVelocity.dot(this._lastVelocity) / (speed * this._lastVelocity.length());
             if (dot < -(rustleConfig.reversalDotThreshold ?? 0.3)) {
                 this._directionReversals += 1;
             }
         }
-        if (speed > velThreshold) {
+        if (hasValidMouseUV && isOverFoliage && speed > velThreshold) {
             this._lastVelocity.copy(currentVelocity);
+        } else if (!isOverFoliage) {
+            this._lastVelocity.set(0, 0);
         }
 
         // Decay reversals over time
@@ -675,6 +691,7 @@ class FoliageWindEffect extends BaseEffect {
                 }
             }
         }
+        this._lastUVWasOverFoliage = hasValidMouseUV && isOverFoliage;
 
         this._updateRustleInstances(dt);
         this._updateRustleUniforms();
@@ -737,6 +754,10 @@ class FoliageWindEffect extends BaseEffect {
         const branchStiffness = rustleConfig.branchStiffness ?? 14.0;
         const branchDamping = rustleConfig.branchDamping ?? 7.0;
         const maxSway = rustleConfig.maxSway ?? 0.05;
+        // Substep spring integration to keep behavior stable across framerates.
+        const maxSpringStep = Math.min(0.05, Math.max(1 / 480, rustleConfig.maxSpringStep ?? (1 / 120)));
+        const substeps = Math.max(1, Math.ceil(dt / maxSpringStep));
+        const stepDt = dt / substeps;
         let wi = 0;
         for (let i = 0; i < this.rustleInstances.length; i++) {
             const inst = this.rustleInstances[i];
@@ -747,11 +768,13 @@ class FoliageWindEffect extends BaseEffect {
 
             // Damped spring branch model:
             // sway'' = -k * sway - c * sway'
-            inst.swayVelocity.x += (-branchStiffness * inst.sway.x - branchDamping * inst.swayVelocity.x) * dt;
-            inst.swayVelocity.y += (-branchStiffness * inst.sway.y - branchDamping * inst.swayVelocity.y) * dt;
-            inst.sway.x += inst.swayVelocity.x * dt;
-            inst.sway.y += inst.swayVelocity.y * dt;
-            inst.sway.clampLength(0, maxSway);
+            for (let s = 0; s < substeps; s++) {
+                inst.swayVelocity.x += (-branchStiffness * inst.sway.x - branchDamping * inst.swayVelocity.x) * stepDt;
+                inst.swayVelocity.y += (-branchStiffness * inst.sway.y - branchDamping * inst.swayVelocity.y) * stepDt;
+                inst.sway.x += inst.swayVelocity.x * stepDt;
+                inst.sway.y += inst.swayVelocity.y * stepDt;
+                inst.sway.clampLength(0, maxSway);
+            }
 
             if (inst.targetAlpha === 0) {
                 inst.alpha = Math.max(0, inst.alpha - fadeSpeed * dt);
