@@ -1,7 +1,7 @@
 {
     "parallax": {
-        "movement": false,
-        "autoMovement": false,
+        "movement": true,
+        "autoMovement": true,
         "tiltControls": true
     },
     "effects": {
@@ -44,7 +44,7 @@
             "rustleInteraction": true
         },
         "screen-vignette": {
-            "enabled": false
+            "enabled": true
         }
     }
 }
