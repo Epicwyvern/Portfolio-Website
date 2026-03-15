@@ -531,6 +531,22 @@
         }
       }
     },
+    "flameMovement": {
+      "maskPath": "assets/bg2FlameMask.webp",
+      "overlaySegments": 64,
+      "displacementStrength": 0.0015,
+      "speed": 1.5,
+      "primaryScale": 25.0,
+      "secondaryScale": 40.0,
+      "verticalBias": 0.003,
+      "horizontalSway": 1.0,
+      "flickerAmount": 0.4,
+      "influenceMin": 0.0,
+      "tipAccent": 0.6,
+      "tipStart": 0.848,
+      "tipEnd": 0.9,
+      "showTipHighlight": false
+    },
     "screenVignette": {
       "strength": 1,
       "color": "0x000000",

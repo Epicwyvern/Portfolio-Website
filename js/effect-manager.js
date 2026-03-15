@@ -72,7 +72,7 @@ class EffectManager {
             
             this.isInitialized = true;
             debugLog(`EffectManager: Successfully initialized with ${this.effectInstances.length} effects`);
-            
+
         } catch (error) {
             console.error('EffectManager: Error during effect loading:', error);
         }
@@ -85,7 +85,7 @@ class EffectManager {
         // In a real implementation, you might want to fetch a manifest or scan the directory
         const expectedEffects = {
             'bg1': ['snowmist.js'],
-            'bg2': ['lanterns.js', 'water-ripple.js', 'foliage-wind.js', 'screen-vignette.js'],
+            'bg2': ['lanterns.js', 'water-ripple.js', 'foliage-wind.js', 'flame-movement.js', 'screen-vignette.js'],
             'bg3': [],
             'bg4': [],
             'bg5': [],
