@@ -570,6 +570,7 @@
       "overlaySegments": 16
     },
     "screenVignette": {
+      "halfResScale": 0.25,
       "strength": 1,
       "color": "0x000000",
       "inner": 0.65,
@@ -583,7 +584,7 @@
       "glowStrengthMax": 0.5,
       "flickerSpeed": 5,
       "flickerAmount": 0.4,
-      "innerFogStrength": 0.95,
+      "innerFogStrength": 1.5,
       "innerRimStrength": 0.28,
       "innerRimThickness": 0.09,
       "fogNoiseScale": 5.5,

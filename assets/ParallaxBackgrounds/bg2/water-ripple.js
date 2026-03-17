@@ -445,7 +445,6 @@ class WaterRippleEffect extends BaseEffect {
             const bgH = bgImg?.height || bgImg?.naturalHeight || 0;
             const maskFlipY = maskTexture?.flipY;
             const bgFlipY = this.parallax?.imageTexture?.flipY;
-            fetch('http://127.0.0.1:7519/ingest/1cd58c4a-6dc6-495e-ab92-e7eb9277cadc',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'c49f0a'},body:JSON.stringify({sessionId:'c49f0a',location:'water-ripple.js:init',message:'Mask vs background dimensions',data:{maskW,maskH,bgW,bgH,maskPath,maskFlipY,bgFlipY},hypothesisId:'H1',timestamp:Date.now()})}).catch(()=>{});
             // #endregion
 
             // Store textures for reuse if already loaded
@@ -479,7 +478,6 @@ class WaterRippleEffect extends BaseEffect {
                                     }
                                 }
                             }
-                            fetch('http://127.0.0.1:7519/ingest/1cd58c4a-6dc6-495e-ab92-e7eb9277cadc',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'c49f0a'},body:JSON.stringify({sessionId:'c49f0a',location:'water-ripple.js:maskSampler',message:'Mask sampler built',data:{hasData,width:s?.width,height:s?.height,total,lowRCount,lowACount,highAButLowR},hypothesisId:'H2',timestamp:Date.now()})}).catch(()=>{});
                             // #endregion
                         }, { timeout: 500 });
                     } else {
@@ -639,7 +637,6 @@ class WaterRippleEffect extends BaseEffect {
                     minU = Math.min(minU, arr[i]); maxU = Math.max(maxU, arr[i]);
                     minV = Math.min(minV, arr[i+1]); maxV = Math.max(maxV, arr[i+1]);
                 }
-                fetch('http://127.0.0.1:7519/ingest/1cd58c4a-6dc6-495e-ab92-e7eb9277cadc',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'c49f0a'},body:JSON.stringify({sessionId:'c49f0a',location:'water-ripple.js:init',message:'Overlay geometry UV bounds',data:{minU,maxU,minV,maxV,vertexCount:arr.length/2},hypothesisId:'H5',timestamp:Date.now()})}).catch(()=>{});
             }
             // #endregion
 

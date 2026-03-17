@@ -115,6 +115,20 @@ class EffectManager {
             }
         });
     }
+
+    renderPrePass(renderer, camera) {
+        if (!this.isInitialized) return;
+        this.effectInstances.forEach((effect) => {
+            try {
+                if (!effect.isEnabled || !effect.isEnabled()) return;
+                if (effect.renderPrePass && typeof effect.renderPrePass === 'function') {
+                    effect.renderPrePass(renderer, camera);
+                }
+            } catch (error) {
+                console.error(`EffectManager: Error in renderPrePass:`, error);
+            }
+        });
+    }
     
     cleanup() {
         debugLog('EffectManager: Cleaning up all effects');

@@ -1142,6 +1142,11 @@ class SimpleParallax {
             this.effectManager.update(deltaTime);
         }
 
+        // Pre-pass: effects that render to RT (e.g. vignette at half-res)
+        if (this.effectManager && this.effectManager.isReady()) {
+            this.effectManager.renderPrePass(this.renderer, this.camera);
+        }
+
         this.renderer.render(this.scene, this.camera);
     }
     

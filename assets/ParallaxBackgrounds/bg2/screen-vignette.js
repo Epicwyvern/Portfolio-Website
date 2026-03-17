@@ -1,11 +1,19 @@
 // Screen Vignette - Viewport-level vignette effect for bg2
 // Operates in screen space; does not move with parallax.
 // Lantern proximity: edge effect morphs from vignette (dark) to glow (warm) as mouse approaches lanterns.
+// Renders to half-resolution RT for ~75% fragment cost reduction.
 
 import BaseEffect from '../../../js/base-effect.js';
 import * as THREE from 'https://unpkg.com/three@0.172.0/build/three.module.js';
 
 const MAX_DIRECTIONAL_GLOWS = 8;
+const COMPOSITE_FRAGMENT_SHADER = `
+    uniform sampler2D uVignetteTexture;
+    varying vec2 vUv;
+    void main() {
+        gl_FragColor = texture2D(uVignetteTexture, vUv);
+    }
+`;
 
 const log = (...args) => {
     if (window.location.pathname.endsWith('test-effects.html')) {
@@ -237,6 +245,47 @@ class ScreenVignetteEffect extends BaseEffect {
             uniforms,
             { distanceFromCamera: 0.5 }
         );
+        this.scene.remove(this.overlayMesh);
+        this.vignetteScene = new THREE.Scene();
+        this.vignetteScene.add(this.overlayMesh);
+
+        const scale = this.halfResScale;
+        const w = Math.max(1, Math.floor(this.renderer.domElement.width * scale));
+        const h = Math.max(1, Math.floor(this.renderer.domElement.height * scale));
+        this.vignetteRT = new THREE.WebGLRenderTarget(w, h, {
+            minFilter: THREE.LinearFilter,
+            magFilter: THREE.LinearFilter,
+            format: THREE.RGBAFormat,
+            type: THREE.UnsignedByteType,
+            stencilBuffer: false,
+            depthBuffer: false
+        });
+        this.overlayMesh.material.uniforms.uResolution.value.set(w, h);
+
+        const compositeMaterial = new THREE.ShaderMaterial({
+            vertexShader: `
+                varying vec2 vUv;
+                void main() {
+                    vUv = uv;
+                    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                }
+            `,
+            fragmentShader: COMPOSITE_FRAGMENT_SHADER,
+            uniforms: { uVignetteTexture: { value: this.vignetteRT.texture } },
+            transparent: true,
+            depthTest: false,
+            depthWrite: false,
+            side: THREE.FrontSide
+        });
+        this.compositeMesh = this._createCompositeScreenQuad(new THREE.PlaneGeometry(1, 1), compositeMaterial);
+        this.scene.add(this.compositeMesh);
+        this.meshes.push(this.compositeMesh);
+        this.materials.push(compositeMaterial);
+
+        const resizeHandler = () => this._resizeVignetteRT();
+        window.addEventListener('resize', resizeHandler);
+        this._rtResizeHandler = resizeHandler;
+
         this.setupMouseTracking();
         this._lanternEnabledAt = {};
         this._refreshEnabledLanternConfigs();
@@ -418,7 +467,34 @@ class ScreenVignetteEffect extends BaseEffect {
         };
     }
 
+    _createCompositeScreenQuad(geometry, material) {
+        const distanceFromCamera = 0.5;
+        const fovRad = THREE.MathUtils.degToRad(45);
+        const halfFov = fovRad / 2;
+        const height = 2 * Math.tan(halfFov) * distanceFromCamera;
+        const width = height * this.camera.aspect;
+        const mesh = new THREE.Mesh(geometry, material);
+        mesh.position.set(0, 0, this.camera.position.z - distanceFromCamera);
+        mesh.scale.set(width, height, 1);
+        mesh.frustumCulled = false;
+        mesh.renderOrder = 9999;
+        mesh.userData.isScreenEffect = true;
+        mesh.userData.distanceFromCamera = distanceFromCamera;
+        return mesh;
+    }
+
+    _resizeVignetteRT() {
+        if (!this.vignetteRT || !this.overlayMesh?.material?.uniforms) return;
+        const scale = this.halfResScale;
+        const w = Math.max(1, Math.floor(this.renderer.domElement.width * scale));
+        const h = Math.max(1, Math.floor(this.renderer.domElement.height * scale));
+        this.vignetteRT.setSize(w, h);
+        this.overlayMesh.material.uniforms.uResolution.value.set(w, h);
+        this.updateScreenEffectViewport(this.compositeMesh);
+    }
+
     applyConfig(config) {
+        this.halfResScale = config.halfResScale ?? 0.5;
         this.vignetteStrength = config.strength ?? 0.15;
         this.vignetteColor = this.parseColor(config.color ?? '0x000000');
         this.vignetteInner = config.inner ?? 0.25;
@@ -456,6 +532,14 @@ class ScreenVignetteEffect extends BaseEffect {
             return new THREE.Color(n);
         }
         return new THREE.Color(0x000000);
+    }
+
+    renderPrePass(renderer, camera) {
+        if (!this.isInitialized || !this.vignetteRT || !this.vignetteScene) return;
+        renderer.setRenderTarget(this.vignetteRT);
+        renderer.clear();
+        renderer.render(this.vignetteScene, camera);
+        renderer.setRenderTarget(null);
     }
 
     update(deltaTime) {
@@ -534,6 +618,18 @@ class ScreenVignetteEffect extends BaseEffect {
             window.removeEventListener('scroll', this._scrollHandler);
             this._scrollHandler = null;
         }
+        if (this._rtResizeHandler) {
+            window.removeEventListener('resize', this._rtResizeHandler);
+            this._rtResizeHandler = null;
+        }
+        if (this.vignetteRT) {
+            this.vignetteRT.dispose();
+            this.vignetteRT = null;
+        }
+        if (this.vignetteScene && this.overlayMesh) {
+            this.vignetteScene.remove(this.overlayMesh);
+        }
+        this.vignetteScene = null;
         super.cleanup();
     }
 }
