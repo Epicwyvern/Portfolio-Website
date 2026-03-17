@@ -23,33 +23,71 @@ const FRAGMENT_SHADER = `
     uniform float flickerAmount;
     uniform float influenceMin;
     uniform float tipAccent;
+    uniform vec2 texelSize;
+    uniform float ringWidth;
+    uniform float ringAlphaMax;
+    uniform float bottomDampStrength;
+    uniform float bottomDampStart;
+    uniform float bottomDampEnd;
+    uniform float randomnessScale;
     uniform float tipStart;
     uniform float tipEnd;
     uniform float showTipHighlight;
+    uniform float showBottomHighlight;
+    uniform float bottomHighlightStart;
+    uniform float bottomHighlightEnd;
 
     varying vec2 vUv;
 
     void main() {
         float maskValue = texture2D(maskMap, vUv).r;
-        float influence = clamp((maskValue - influenceMin) / max(0.0001, 1.0 - influenceMin), 0.0, 1.0);
-        if (influence <= 0.001) discard;
+
+        // Inner influence: strict mask area (fully affected)
+        float innerInfluence = clamp((maskValue - influenceMin) / max(0.0001, 1.0 - influenceMin), 0.0, 1.0);
+
+        // Soft ring: sample neighbours to slightly extend influence
+        vec2 off = texelSize * max(0.0, ringWidth);
+        float neighbourMax = max(
+            max(texture2D(maskMap, vUv + vec2(off.x, 0.0)).r, texture2D(maskMap, vUv - vec2(off.x, 0.0)).r),
+            max(texture2D(maskMap, vUv + vec2(0.0, off.y)).r, texture2D(maskMap, vUv - vec2(0.0, off.y)).r)
+        );
+        float expanded = clamp((neighbourMax - influenceMin) / max(0.0001, 1.0 - influenceMin), 0.0, 1.0);
+
+        // Ring is where expanded has influence but inner is fading out
+        float ring = max(0.0, expanded - innerInfluence);
+        float ringAlpha = clamp(ring * ringAlphaMax, 0.0, ringAlphaMax); // semi‑transparent halo
+
+        float alphaInfluence = innerInfluence + ringAlpha;
+        if (alphaInfluence <= 0.001) discard;
+
+        // Displacement is strongest in inner region, falls off in the ring
+        float displacementInfluence = innerInfluence + ring * 0.25;
+
+        // Bottom damping: reduce motion near candle base
+        float bottomFactor = smoothstep(bottomDampStart, bottomDampEnd, 1.0 - vUv.y);
+        float bottomMul = mix(1.0, 1.0 - bottomDampStrength, bottomFactor);
 
         float t = time * speed;
         float pi = 6.2831853;
         float tipFactor = smoothstep(tipStart, tipEnd, vUv.y);
         float tipMul = 1.0 + tipAccent * tipFactor;
 
-        float p1 = vUv.x * primaryScale + vUv.y * primaryScale * 0.7 + t;
-        float p2 = vUv.x * secondaryScale * 1.3 - vUv.y * secondaryScale * 0.5 + t * 0.83 + 1.5;
-        float p3 = (vUv.x - vUv.y) * primaryScale * 0.6 + t * 1.1 + 3.0;
+        // Temporal banded randomness (no grain): varies mainly with height and time
+        float bandPhase = vUv.y * 7.0 + time * 0.8;
+        float n = sin(bandPhase) * 0.5 + 0.5;
+        float randScale = 1.0 + randomnessScale * (n - 0.5);
+
+        float p1 = (vUv.x * primaryScale + vUv.y * primaryScale * 0.7 + t) * randScale;
+        float p2 = (vUv.x * secondaryScale * 1.3 - vUv.y * secondaryScale * 0.5 + t * 0.83 + 1.5) * (1.0 + randomnessScale * 0.3);
+        float p3 = ((vUv.x - vUv.y) * primaryScale * 0.6 + t * 1.1 + 3.0) * (1.0 - randomnessScale * 0.2);
 
         float dx = sin(p1 * pi) * 0.5 + sin(p2 * pi) * 0.35 + sin(p3 * pi) * 0.15;
         float dy = sin(p1 * pi + 0.7) * 0.5 + sin(p2 * pi + 1.2) * 0.35 + sin(p3 * pi + 0.3) * 0.15;
 
         float flicker = 1.0 + (flickerAmount * (sin(t * 4.0) * 0.5 + 0.5));
         vec2 displacement = vec2(
-            (dx * horizontalSway + verticalBias * sin(t * 2.0)) * displacementStrength * flicker * influence * tipMul,
-            (dy + verticalBias) * displacementStrength * flicker * influence * tipMul
+            (dx * horizontalSway + verticalBias * sin(t * 2.0)) * displacementStrength * flicker * displacementInfluence * tipMul * bottomMul,
+            (dy + verticalBias) * displacementStrength * flicker * displacementInfluence * tipMul * bottomMul
         );
 
         vec2 displacedUv = clamp(vUv + displacement, vec2(0.0), vec2(1.0));
@@ -58,7 +96,11 @@ const FRAGMENT_SHADER = `
         vec3 tipTint = vec3(1.0, 0.2, 0.6);
         float tintMix = showTipHighlight * inTip * 0.45;
         color.rgb = mix(color.rgb, tipTint, tintMix);
-        gl_FragColor = vec4(color.rgb, influence);
+        float inBottom = step(bottomHighlightStart, vUv.y) * step(vUv.y, bottomHighlightEnd);
+        vec3 bottomTint = vec3(0.2, 0.8, 1.0);
+        float bottomMix = showBottomHighlight * inBottom * 0.4;
+        color.rgb = mix(color.rgb, bottomTint, bottomMix);
+        gl_FragColor = vec4(color.rgb, alphaInfluence);
     }
 `;
 
@@ -115,6 +157,8 @@ class FlameMovementEffect extends BaseEffect {
             if (!this.maskTexture) this.maskTexture = maskTexture;
             this.textures.push(maskTexture);
 
+            const tw = Math.max(1, maskTexture.image?.width || 1920);
+            const th = Math.max(1, maskTexture.image?.height || 1080);
             this.uniforms = {
                 map: { value: this.parallax.imageTexture },
                 maskMap: { value: maskTexture },
@@ -130,7 +174,17 @@ class FlameMovementEffect extends BaseEffect {
                 tipAccent: { value: config.tipAccent ?? 0.6 },
                 tipStart: { value: config.tipStart ?? 0.4 },
                 tipEnd: { value: config.tipEnd ?? 0.95 },
-                showTipHighlight: { value: config.showTipHighlight ? 1.0 : 0.0 }
+                showTipHighlight: { value: config.showTipHighlight ? 1.0 : 0.0 },
+                showBottomHighlight: { value: config.showBottomHighlight ? 1.0 : 0.0 },
+                bottomHighlightStart: { value: config.bottomHighlightStart ?? 0.0 },
+                bottomHighlightEnd: { value: config.bottomHighlightEnd ?? 0.2 },
+                texelSize: { value: new THREE.Vector2(1 / tw, 1 / th) },
+                ringWidth: { value: config.ringWidth ?? 1.0 },
+                ringAlphaMax: { value: config.ringAlphaMax ?? 0.35 },
+                bottomDampStrength: { value: config.bottomDampStrength ?? 0.6 },
+                bottomDampStart: { value: config.bottomDampStart ?? 0.0 },
+                bottomDampEnd: { value: config.bottomDampEnd ?? 0.25 },
+                randomnessScale: { value: config.randomnessScale ?? 0.3 }
             };
 
             this.overlayMesh = this.createCoarseAreaEffectMesh(
@@ -144,7 +198,6 @@ class FlameMovementEffect extends BaseEffect {
                 }
             );
             this.overlayMesh.position.z = 0.013;
-            this.overlayMesh.renderOrder = 10000;
 
             this.isInitialized = true;
             log('FlameMovementEffect: Initialized successfully');
@@ -175,10 +228,18 @@ class FlameMovementEffect extends BaseEffect {
         this.uniforms.tipStart.value = config.tipStart ?? this.uniforms.tipStart.value;
         this.uniforms.tipEnd.value = config.tipEnd ?? this.uniforms.tipEnd.value;
         this.uniforms.showTipHighlight.value = config.showTipHighlight ? 1.0 : 0.0;
+        this.uniforms.showBottomHighlight.value = config.showBottomHighlight ? 1.0 : 0.0;
+        this.uniforms.bottomHighlightStart.value = config.bottomHighlightStart ?? this.uniforms.bottomHighlightStart.value;
+        this.uniforms.bottomHighlightEnd.value = config.bottomHighlightEnd ?? this.uniforms.bottomHighlightEnd.value;
+        this.uniforms.ringWidth.value = config.ringWidth ?? this.uniforms.ringWidth.value;
+        this.uniforms.ringAlphaMax.value = config.ringAlphaMax ?? this.uniforms.ringAlphaMax.value;
+        this.uniforms.bottomDampStrength.value = config.bottomDampStrength ?? this.uniforms.bottomDampStrength.value;
+        this.uniforms.bottomDampStart.value = config.bottomDampStart ?? this.uniforms.bottomDampStart.value;
+        this.uniforms.bottomDampEnd.value = config.bottomDampEnd ?? this.uniforms.bottomDampEnd.value;
+        this.uniforms.randomnessScale.value = config.randomnessScale ?? this.uniforms.randomnessScale.value;
 
         this.syncWithParallaxMesh(this.overlayMesh);
         this.overlayMesh.position.z = 0.013;
-        if (this.overlayMesh.renderOrder !== 10000) this.overlayMesh.renderOrder = 10000;
     }
 
     cleanup() {
