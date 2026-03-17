@@ -1,4 +1,7 @@
 {
+    "ui": {
+        "showFpsCounter": false
+    },
     "parallax": {
         "movement": true,
         "autoMovement": true,
@@ -42,6 +45,12 @@
         "foliage-wind": {
             "enabled": true,
             "rustleInteraction": true
+        },
+        "flame-movement": {
+            "enabled": true
+        },
+        "flame-glow": {
+            "enabled": true
         },
         "screen-vignette": {
             "enabled": true

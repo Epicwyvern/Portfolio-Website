@@ -34,8 +34,8 @@ const FRAGMENT_SHADER = `
     uniform float tipEnd;
     uniform float showTipHighlight;
     uniform float showBottomHighlight;
-    uniform float bottomHighlightStart;
-    uniform float bottomHighlightEnd;
+    uniform float heightScale;
+    uniform float flameBaseY;
 
     varying vec2 vUv;
 
@@ -90,13 +90,17 @@ const FRAGMENT_SHADER = `
             (dy + verticalBias) * displacementStrength * flicker * displacementInfluence * tipMul * bottomMul
         );
 
-        vec2 displacedUv = clamp(vUv + displacement, vec2(0.0), vec2(1.0));
+        vec2 displacedUv = vUv + displacement;
+        displacedUv.y = (displacedUv.y - flameBaseY) * heightScale + flameBaseY;
+        displacedUv = clamp(displacedUv, vec2(0.0), vec2(1.0));
         vec4 color = texture2D(map, displacedUv);
         float inTip = step(tipStart, vUv.y) * step(vUv.y, tipEnd);
         vec3 tipTint = vec3(1.0, 0.2, 0.6);
         float tintMix = showTipHighlight * inTip * 0.45;
         color.rgb = mix(color.rgb, tipTint, tintMix);
-        float inBottom = step(bottomHighlightStart, vUv.y) * step(vUv.y, bottomHighlightEnd);
+        // Bottom band uses the same range as bottom damping (in the 1.0 - vUv.y space)
+        float yBottom = 1.0 - vUv.y;
+        float inBottom = step(bottomDampStart, yBottom) * step(yBottom, bottomDampEnd);
         vec3 bottomTint = vec3(0.2, 0.8, 1.0);
         float bottomMix = showBottomHighlight * inBottom * 0.4;
         color.rgb = mix(color.rgb, bottomTint, bottomMix);
@@ -176,15 +180,15 @@ class FlameMovementEffect extends BaseEffect {
                 tipEnd: { value: config.tipEnd ?? 0.95 },
                 showTipHighlight: { value: config.showTipHighlight ? 1.0 : 0.0 },
                 showBottomHighlight: { value: config.showBottomHighlight ? 1.0 : 0.0 },
-                bottomHighlightStart: { value: config.bottomHighlightStart ?? 0.0 },
-                bottomHighlightEnd: { value: config.bottomHighlightEnd ?? 0.2 },
                 texelSize: { value: new THREE.Vector2(1 / tw, 1 / th) },
                 ringWidth: { value: config.ringWidth ?? 1.0 },
                 ringAlphaMax: { value: config.ringAlphaMax ?? 0.35 },
                 bottomDampStrength: { value: config.bottomDampStrength ?? 0.6 },
                 bottomDampStart: { value: config.bottomDampStart ?? 0.0 },
                 bottomDampEnd: { value: config.bottomDampEnd ?? 0.25 },
-                randomnessScale: { value: config.randomnessScale ?? 0.3 }
+                randomnessScale: { value: config.randomnessScale ?? 0.3 },
+                heightScale: { value: 1.0 },
+                flameBaseY: { value: config.flameBaseY ?? 0.82 }
             };
 
             this.overlayMesh = this.createCoarseAreaEffectMesh(
@@ -216,6 +220,15 @@ class FlameMovementEffect extends BaseEffect {
         this.uniforms.time.value = this.time;
 
         const config = this.getConfig();
+        const speed = config.speed ?? 3.0;
+        const flickerAmount = config.flickerAmount ?? 0.4;
+        const heightVariation = config.heightVariation ?? 0.06;
+        const t = this.time * speed;
+        const flicker = 1.0 + flickerAmount * (Math.sin(t * 4.0) * 0.5 + 0.5);
+        const heightScale = 1.0 + heightVariation * Math.sin(t * 4.0);
+        if (!this.parallax.flameState) this.parallax.flameState = {};
+        this.parallax.flameState.flicker = flicker;
+        this.parallax.flameState.heightScale = heightScale;
         this.uniforms.displacementStrength.value = config.displacementStrength ?? this.uniforms.displacementStrength.value;
         this.uniforms.speed.value = config.speed ?? this.uniforms.speed.value;
         this.uniforms.primaryScale.value = config.primaryScale ?? this.uniforms.primaryScale.value;
@@ -229,14 +242,14 @@ class FlameMovementEffect extends BaseEffect {
         this.uniforms.tipEnd.value = config.tipEnd ?? this.uniforms.tipEnd.value;
         this.uniforms.showTipHighlight.value = config.showTipHighlight ? 1.0 : 0.0;
         this.uniforms.showBottomHighlight.value = config.showBottomHighlight ? 1.0 : 0.0;
-        this.uniforms.bottomHighlightStart.value = config.bottomHighlightStart ?? this.uniforms.bottomHighlightStart.value;
-        this.uniforms.bottomHighlightEnd.value = config.bottomHighlightEnd ?? this.uniforms.bottomHighlightEnd.value;
         this.uniforms.ringWidth.value = config.ringWidth ?? this.uniforms.ringWidth.value;
         this.uniforms.ringAlphaMax.value = config.ringAlphaMax ?? this.uniforms.ringAlphaMax.value;
         this.uniforms.bottomDampStrength.value = config.bottomDampStrength ?? this.uniforms.bottomDampStrength.value;
         this.uniforms.bottomDampStart.value = config.bottomDampStart ?? this.uniforms.bottomDampStart.value;
         this.uniforms.bottomDampEnd.value = config.bottomDampEnd ?? this.uniforms.bottomDampEnd.value;
         this.uniforms.randomnessScale.value = config.randomnessScale ?? this.uniforms.randomnessScale.value;
+        this.uniforms.heightScale.value = heightScale;
+        this.uniforms.flameBaseY.value = config.flameBaseY ?? 0.82;
 
         this.syncWithParallaxMesh(this.overlayMesh);
         this.overlayMesh.position.z = 0.013;

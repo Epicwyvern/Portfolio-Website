@@ -695,6 +695,7 @@ class SimpleParallax {
             antialias: this.antialias,
             preserveDrawingBuffer: this.preserveDrawingBuffer,
             alpha: true,
+            stencil: true,
             powerPreference: 'high-performance'
         });
         this.renderer.outputEncoding = THREE.sRGBEncoding;

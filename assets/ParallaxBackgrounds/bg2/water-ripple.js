@@ -225,22 +225,43 @@ const DEFAULT_FRAGMENT_SHADER = `
         vec2 rippleUV = vUv * rippleScale + time * rippleSpeed;
         vec3 normal = normalize(texture2D(rippleNormal, rippleUV).xyz * 2.0 - 1.0);
 
-        // WAKE INTERACTION (unrolled for WebGL 1 compatibility)
+        // WAKE INTERACTION — early spatial skip: only compute when fragment is near any instance
         vec2 wakeDisplacement = vec2(0.0);
         if (mouseEnabled > 0.5 && mouseInstanceCount > 0) {
-            if (mouseInstanceCount > 0) wakeDisplacement += addWakeContribution(mouseInstancePos0, mouseInstanceVel0, mouseInstanceAlpha0);
-            if (mouseInstanceCount > 1) wakeDisplacement += addWakeContribution(mouseInstancePos1, mouseInstanceVel1, mouseInstanceAlpha1);
-            if (mouseInstanceCount > 2) wakeDisplacement += addWakeContribution(mouseInstancePos2, mouseInstanceVel2, mouseInstanceAlpha2);
-            if (mouseInstanceCount > 3) wakeDisplacement += addWakeContribution(mouseInstancePos3, mouseInstanceVel3, mouseInstanceAlpha3);
-            if (mouseInstanceCount > 4) wakeDisplacement += addWakeContribution(mouseInstancePos4, mouseInstanceVel4, mouseInstanceAlpha4);
-            if (mouseInstanceCount > 5) wakeDisplacement += addWakeContribution(mouseInstancePos5, mouseInstanceVel5, mouseInstanceAlpha5);
-            if (mouseInstanceCount > 6) wakeDisplacement += addWakeContribution(mouseInstancePos6, mouseInstanceVel6, mouseInstanceAlpha6);
-            if (mouseInstanceCount > 7) wakeDisplacement += addWakeContribution(mouseInstancePos7, mouseInstanceVel7, mouseInstanceAlpha7);
+            float minWakeDist = 1.0;
+            if (mouseInstanceCount > 0) minWakeDist = min(minWakeDist, length(vUv - mouseInstancePos0));
+            if (mouseInstanceCount > 1) minWakeDist = min(minWakeDist, length(vUv - mouseInstancePos1));
+            if (mouseInstanceCount > 2) minWakeDist = min(minWakeDist, length(vUv - mouseInstancePos2));
+            if (mouseInstanceCount > 3) minWakeDist = min(minWakeDist, length(vUv - mouseInstancePos3));
+            if (mouseInstanceCount > 4) minWakeDist = min(minWakeDist, length(vUv - mouseInstancePos4));
+            if (mouseInstanceCount > 5) minWakeDist = min(minWakeDist, length(vUv - mouseInstancePos5));
+            if (mouseInstanceCount > 6) minWakeDist = min(minWakeDist, length(vUv - mouseInstancePos6));
+            if (mouseInstanceCount > 7) minWakeDist = min(minWakeDist, length(vUv - mouseInstancePos7));
+            if (minWakeDist < wakeRadius) {
+                if (mouseInstanceCount > 0) wakeDisplacement += addWakeContribution(mouseInstancePos0, mouseInstanceVel0, mouseInstanceAlpha0);
+                if (mouseInstanceCount > 1) wakeDisplacement += addWakeContribution(mouseInstancePos1, mouseInstanceVel1, mouseInstanceAlpha1);
+                if (mouseInstanceCount > 2) wakeDisplacement += addWakeContribution(mouseInstancePos2, mouseInstanceVel2, mouseInstanceAlpha2);
+                if (mouseInstanceCount > 3) wakeDisplacement += addWakeContribution(mouseInstancePos3, mouseInstanceVel3, mouseInstanceAlpha3);
+                if (mouseInstanceCount > 4) wakeDisplacement += addWakeContribution(mouseInstancePos4, mouseInstanceVel4, mouseInstanceAlpha4);
+                if (mouseInstanceCount > 5) wakeDisplacement += addWakeContribution(mouseInstancePos5, mouseInstanceVel5, mouseInstanceAlpha5);
+                if (mouseInstanceCount > 6) wakeDisplacement += addWakeContribution(mouseInstancePos6, mouseInstanceVel6, mouseInstanceAlpha6);
+                if (mouseInstanceCount > 7) wakeDisplacement += addWakeContribution(mouseInstancePos7, mouseInstanceVel7, mouseInstanceAlpha7);
+            }
         }
 
-        // SPLOOSH INTERACTION — unified wave interference (unrolled for WebGL 1)
+        // SPLOOSH INTERACTION — early spatial skip: only compute when fragment is near any sploosh
         vec2 splooshDisplacement = vec2(0.0);
         if (splooshEnabled > 0.5 && splooshInstanceCount > 0) {
+            float minSplooshDist = 1.0;
+            if (splooshInstanceCount > 0) minSplooshDist = min(minSplooshDist, length(vUv - splooshPos0));
+            if (splooshInstanceCount > 1) minSplooshDist = min(minSplooshDist, length(vUv - splooshPos1));
+            if (splooshInstanceCount > 2) minSplooshDist = min(minSplooshDist, length(vUv - splooshPos2));
+            if (splooshInstanceCount > 3) minSplooshDist = min(minSplooshDist, length(vUv - splooshPos3));
+            if (splooshInstanceCount > 4) minSplooshDist = min(minSplooshDist, length(vUv - splooshPos4));
+            if (splooshInstanceCount > 5) minSplooshDist = min(minSplooshDist, length(vUv - splooshPos5));
+            if (splooshInstanceCount > 6) minSplooshDist = min(minSplooshDist, length(vUv - splooshPos6));
+            if (splooshInstanceCount > 7) minSplooshDist = min(minSplooshDist, length(vUv - splooshPos7));
+            if (minSplooshDist < splooshRadius) {
             vec4 s0 = vec4(0.0), s1 = vec4(0.0), s2 = vec4(0.0), s3 = vec4(0.0);
             vec4 s4 = vec4(0.0), s5 = vec4(0.0), s6 = vec4(0.0), s7 = vec4(0.0);
             if (splooshInstanceCount > 0) s0 = splooshSourceData(splooshPos0, splooshAlpha0, splooshAge0);
@@ -255,7 +276,6 @@ const DEFAULT_FRAGMENT_SHADER = `
             vec2 rawSum = s0.xy + s1.xy + s2.xy + s3.xy + s4.xy + s5.xy + s6.xy + s7.xy;
             float combinedEnv = max(max(max(s0.z, s1.z), max(s2.z, s3.z)), max(max(s4.z, s5.z), max(s6.z, s7.z)));
 
-            // Skip expensive work if this fragment is outside all sploosh envelopes
             if (combinedEnv > 0.001) {
                 float rawMag = length(rawSum);
                 float satK = 3.0;
@@ -276,6 +296,7 @@ const DEFAULT_FRAGMENT_SHADER = `
 
                 splooshDisplacement = saturatedDisp * combinedEnv * splooshStrength * edgeFade * 0.15;
             }
+            }
         }
 
         vec2 combinedDisplacement = normal.xy + wakeDisplacement + splooshDisplacement;
@@ -289,6 +310,15 @@ const DEFAULT_FRAGMENT_SHADER = `
         vec3 tintedColor = bgColor.rgb * (1.0 - tintAmount * 0.6) + vec3(0.7, 0.85, 1.0) * tintAmount * 0.15;
 
         gl_FragColor = vec4(tintedColor, maskStrength);
+    }
+`;
+
+const STENCIL_PREPASS_FRAGMENT = `
+    uniform sampler2D maskMap;
+    varying vec2 vUv;
+    void main() {
+        if (texture2D(maskMap, vUv).r < 0.00392) discard;
+        gl_FragColor = vec4(0.0);
     }
 `;
 
@@ -402,7 +432,21 @@ class WaterRippleEffect extends BaseEffect {
             }
 
             maskTexture.wrapS = maskTexture.wrapT = THREE.ClampToEdgeWrapping;
+            maskTexture.minFilter = maskTexture.magFilter = THREE.LinearFilter;
+            maskTexture.generateMipmaps = false;
             rippleTexture.wrapS = rippleTexture.wrapT = THREE.RepeatWrapping;
+
+            // #region agent log
+            const maskImg = maskTexture?.image;
+            const bgImg = this.parallax?.imageTexture?.image;
+            const maskW = maskImg?.width || maskImg?.naturalWidth || 0;
+            const maskH = maskImg?.height || maskImg?.naturalHeight || 0;
+            const bgW = bgImg?.width || bgImg?.naturalWidth || 0;
+            const bgH = bgImg?.height || bgImg?.naturalHeight || 0;
+            const maskFlipY = maskTexture?.flipY;
+            const bgFlipY = this.parallax?.imageTexture?.flipY;
+            fetch('http://127.0.0.1:7519/ingest/1cd58c4a-6dc6-495e-ab92-e7eb9277cadc',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'c49f0a'},body:JSON.stringify({sessionId:'c49f0a',location:'water-ripple.js:init',message:'Mask vs background dimensions',data:{maskW,maskH,bgW,bgH,maskPath,maskFlipY,bgFlipY},hypothesisId:'H1',timestamp:Date.now()})}).catch(()=>{});
+            // #endregion
 
             // Store textures for reuse if already loaded
             if (!this.maskTexture) this.maskTexture = maskTexture;
@@ -416,7 +460,28 @@ class WaterRippleEffect extends BaseEffect {
                 this.maskSampler = null;
                 const scheduleMaskSampler = () => {
                     if (typeof requestIdleCallback !== 'undefined') {
-                        requestIdleCallback(() => { this.maskSampler = this.buildMaskSampler(maskTexture); }, { timeout: 500 });
+                        requestIdleCallback(() => {
+                            this.maskSampler = this.buildMaskSampler(maskTexture);
+                            // #region agent log
+                            const s = this.maskSampler;
+                            const hasData = !!(s?.data);
+                            let lowRCount = 0, lowACount = 0, highAButLowR = 0, total = 0;
+                            if (hasData && s.data) {
+                                const d = s.data, w = s.width, h = s.height;
+                                for (let y = 0; y < h; y++) {
+                                    for (let x = 0; x < w; x++) {
+                                        const i = (y * w + x) * 4;
+                                        const r = d[i] / 255, a = d[i+3] / 255;
+                                        total++;
+                                        if (r < 0.01) lowRCount++;
+                                        if (a < 0.01) lowACount++;
+                                        if (a > 0.5 && r < 0.01) highAButLowR++;
+                                    }
+                                }
+                            }
+                            fetch('http://127.0.0.1:7519/ingest/1cd58c4a-6dc6-495e-ab92-e7eb9277cadc',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'c49f0a'},body:JSON.stringify({sessionId:'c49f0a',location:'water-ripple.js:maskSampler',message:'Mask sampler built',data:{hasData,width:s?.width,height:s?.height,total,lowRCount,lowACount,highAButLowR},hypothesisId:'H2',timestamp:Date.now()})}).catch(()=>{});
+                            // #endregion
+                        }, { timeout: 500 });
                     } else {
                         setTimeout(() => { this.maskSampler = this.buildMaskSampler(maskTexture); }, 0);
                     }
@@ -531,6 +596,53 @@ class WaterRippleEffect extends BaseEffect {
             );
             this.overlayMesh.position.z = 0.01;
 
+            // Stencil prepass: cheap mask-only shader runs first; main water shader only runs where stencil is set
+            // Share geometry with main overlay (no clone) — both meshes reference the same BufferGeometry
+            const prepassGeometry = this.overlayMesh.geometry;
+            const prepassUniforms = { maskMap: { value: maskTexture } };
+            const prepassMaterial = new THREE.ShaderMaterial({
+                vertexShader: this.parallax.getDisplacementVertexShader(),
+                fragmentShader: STENCIL_PREPASS_FRAGMENT,
+                uniforms: { ...this.parallax.getDisplacementUniforms(), ...prepassUniforms },
+                transparent: true,
+                depthWrite: false,
+                colorWrite: false,
+                side: THREE.DoubleSide,
+                stencilWrite: true,
+                stencilFunc: THREE.AlwaysStencilFunc,
+                stencilFail: THREE.KeepStencilOp,
+                stencilZFail: THREE.KeepStencilOp,
+                stencilZPass: THREE.ReplaceStencilOp,
+                stencilRef: 1
+            });
+            this.stencilPrepassMesh = new THREE.Mesh(prepassGeometry, prepassMaterial);
+            this.stencilPrepassMesh.position.z = 0.009;
+            this.stencilPrepassMesh.renderOrder = -1;
+            this.meshes.push(this.stencilPrepassMesh);
+            this.materials.push(prepassMaterial);
+            this.scene.add(this.stencilPrepassMesh);
+
+            const overlayMaterial = this.overlayMesh.material;
+            overlayMaterial.stencilWrite = false;
+            overlayMaterial.stencilFunc = THREE.EqualStencilFunc;
+            overlayMaterial.stencilRef = 1;
+            overlayMaterial.stencilFail = THREE.KeepStencilOp;
+            overlayMaterial.stencilZFail = THREE.KeepStencilOp;
+            overlayMaterial.stencilZPass = THREE.KeepStencilOp;
+
+            // #region agent log
+            const uvAttr = this.overlayMesh?.geometry?.attributes?.uv;
+            if (uvAttr && uvAttr.array) {
+                const arr = uvAttr.array;
+                let minU = 1, maxU = 0, minV = 1, maxV = 0;
+                for (let i = 0; i < arr.length; i += 2) {
+                    minU = Math.min(minU, arr[i]); maxU = Math.max(maxU, arr[i]);
+                    minV = Math.min(minV, arr[i+1]); maxV = Math.max(maxV, arr[i+1]);
+                }
+                fetch('http://127.0.0.1:7519/ingest/1cd58c4a-6dc6-495e-ab92-e7eb9277cadc',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'c49f0a'},body:JSON.stringify({sessionId:'c49f0a',location:'water-ripple.js:init',message:'Overlay geometry UV bounds',data:{minU,maxU,minV,maxV,vertexCount:arr.length/2},hypothesisId:'H5',timestamp:Date.now()})}).catch(()=>{});
+            }
+            // #endregion
+
             this.uniforms = effectUniforms;
             this.time = 0;
             
@@ -596,6 +708,10 @@ class WaterRippleEffect extends BaseEffect {
 
         this.syncWithParallaxMesh(this.overlayMesh);
         this.overlayMesh.position.z = 0.01;
+        if (this.stencilPrepassMesh) {
+            this.syncWithParallaxMesh(this.stencilPrepassMesh);
+            this.stencilPrepassMesh.position.z = 0.009;
+        }
     }
     
     updateMouseInteraction(deltaTime) {
@@ -1199,6 +1315,7 @@ class WaterRippleEffect extends BaseEffect {
 
     updatePositionsForMeshTransform(meshTransform) {
         if (this.overlayMesh) this.syncWithParallaxMesh(this.overlayMesh);
+        if (this.stencilPrepassMesh) this.syncWithParallaxMesh(this.stencilPrepassMesh);
     }
 
     cleanup() {
@@ -1255,7 +1372,12 @@ class WaterRippleEffect extends BaseEffect {
             this._scrollHandler = null;
         }
         
+        // Prepass shares geometry with overlay; avoid double-dispose
+        if (this.stencilPrepassMesh) {
+            this.stencilPrepassMesh.geometry = null;
+        }
         this.overlayMesh = null;
+        this.stencilPrepassMesh = null;
         this.uniforms = null;
         this.time = 0;
         
