@@ -17,11 +17,84 @@ const log = (...args) => {
 const DEFAULT_MAX_WAKE_INSTANCES = 64;
 const DEFAULT_MAX_SPLOOSH_INSTANCES = 64;
 
+const STENCIL_PREPASS_FRAGMENT = `
+    uniform sampler2D maskMap;
+    varying vec2 vUv;
+    void main() {
+        if (texture2D(maskMap, vUv).r < 0.00392) discard;
+        gl_FragColor = vec4(0.0);
+    }
+`;
+
+/** Ambient-only shader (no wake/sploosh) — used when simulation is disabled. */
+function buildFragmentShaderAmbientOnly() {
+    return `
+    uniform sampler2D map;
+    uniform sampler2D maskMap;
+    uniform sampler2D rippleNormal;
+    uniform float time;
+    uniform float rippleScale;
+    uniform float rippleSpeed;
+    uniform float refractionStrength;
+    varying vec2 vUv;
+    void main() {
+        float maskStrength = texture2D(maskMap, vUv).r;
+        if (maskStrength < 0.00392) discard;
+        vec2 rippleUV = vUv * rippleScale + time * rippleSpeed;
+        vec3 normal = normalize(texture2D(rippleNormal, rippleUV).xyz * 2.0 - 1.0);
+        vec2 refractedUV = clamp(vUv + normal.xy * refractionStrength * maskStrength, 0.001, 0.999);
+        gl_FragColor = vec4(texture2D(map, refractedUV).rgb, maskStrength);
+    }
+`;
+}
+
+/** Main fragment shader: ambient ripple + disturbance texture from simulation. */
+function buildFragmentShaderWithDisturbance() {
+    return `
+    uniform sampler2D map;
+    uniform sampler2D maskMap;
+    uniform sampler2D rippleNormal;
+    uniform sampler2D uDisturbanceTexture;
+    uniform float time;
+    uniform float rippleScale;
+    uniform float rippleSpeed;
+    uniform float refractionStrength;
+    uniform float wakeTint;
+    uniform float splooshTint;
+
+    varying vec2 vUv;
+
+    void main() {
+        float maskStrength = texture2D(maskMap, vUv).r;
+        if (maskStrength < 0.00392) discard;
+
+        // AMBIENT RIPPLE
+        vec2 rippleUV = vUv * rippleScale + time * rippleSpeed;
+        vec3 normal = normalize(texture2D(rippleNormal, rippleUV).xyz * 2.0 - 1.0);
+
+        // DISTURBANCE from simulation texture (displacement in R,G channels)
+        vec2 disturbance = texture2D(uDisturbanceTexture, vUv).xy;
+
+        vec2 combinedDisplacement = normal.xy + disturbance;
+        vec2 refractedUV = vUv + combinedDisplacement * refractionStrength * maskStrength;
+        refractedUV = clamp(refractedUV, 0.001, 0.999);
+        vec4 bgColor = texture2D(map, refractedUV);
+
+        // Subtle tint in disturbed areas
+        float distMag = length(disturbance);
+        float tintAmount = distMag * (wakeTint + splooshTint) * 0.5;
+        vec3 tintedColor = bgColor.rgb * (1.0 - tintAmount * 0.6) + vec3(0.7, 0.85, 1.0) * tintAmount * 0.15;
+
+        gl_FragColor = vec4(tintedColor, maskStrength);
+    }
+`;
+}
+
 /**
- * Builds the fragment shader with configurable instance counts.
- * WebGL 1 compatibility: no uniform arrays, so we generate per-slot uniforms.
+ * Builds the simulation fragment shader: diffuse + damp + inject wake/sploosh.
+ * Outputs displacement (xy) to RG channels of render target.
  */
-function buildFragmentShader(maxWake, maxSploosh) {
+function buildSimulationFragmentShader(maxWake, maxSploosh) {
     const wakeDecls = [];
     const splooshDecls = [];
     for (let i = 0; i < maxWake; i++) {
@@ -35,24 +108,19 @@ function buildFragmentShader(maxWake, maxSploosh) {
         splooshDecls.push(`    uniform float splooshAge${i};`);
     }
 
-    const wakeMinDist = [];
     const wakeContrib = [];
     for (let i = 0; i < maxWake; i++) {
-        wakeMinDist.push(`            if (mouseInstanceCount > ${i}) minWakeDist = min(minWakeDist, length(vUv - mouseInstancePos${i}));`);
-        wakeContrib.push(`                if (mouseInstanceCount > ${i}) wakeDisplacement += addWakeContribution(mouseInstancePos${i}, mouseInstanceVel${i}, mouseInstanceAlpha${i});`);
+        wakeContrib.push(`                if (mouseInstanceCount > ${i}) impulse += addWakeContribution(mouseInstancePos${i}, mouseInstanceVel${i}, mouseInstanceAlpha${i});`);
     }
 
-    const splooshMinDist = [];
     const splooshSourceVars = [];
     const splooshSourceAssign = [];
     const splooshRawSum = [];
     for (let i = 0; i < maxSploosh; i++) {
-        splooshMinDist.push(`            if (splooshInstanceCount > ${i}) minSplooshDist = min(minSplooshDist, length(vUv - splooshPos${i}));`);
         splooshSourceVars.push(`            vec4 s${i} = vec4(0.0);`);
         splooshSourceAssign.push(`            if (splooshInstanceCount > ${i}) s${i} = splooshSourceData(splooshPos${i}, splooshAlpha${i}, splooshAge${i});`);
         splooshRawSum.push(`s${i}.xy`);
     }
-    // Build max(s0.z, s1.z, ..., sN.z) as a binary tree (GLSL max takes 2 args)
     const envParts = Array.from({ length: maxSploosh }, (_, i) => `s${i}.z`);
     const buildMaxTree = (arr) => {
         if (arr.length === 1) return arr[0];
@@ -62,33 +130,29 @@ function buildFragmentShader(maxWake, maxSploosh) {
     const splooshCombinedEnvExpr = buildMaxTree(envParts);
 
     return `
-    uniform sampler2D map;
-    uniform sampler2D maskMap;
-    uniform sampler2D rippleNormal;
-    uniform float time;
-    uniform float rippleScale;
-    uniform float rippleSpeed;
-    uniform float refractionStrength;
+    uniform sampler2D uPrevState;
+    uniform sampler2D uMaskMap;
+    uniform vec2 uResolution;
+    uniform float uTime;
+    uniform float uDiffusionStrength;
+    uniform float uDampingFactor;
+    uniform float uWakeImpulseStrength;
+    uniform float uSplooshImpulseStrength;
+    uniform float uMaxDisturbance;
 
-    // Wake interaction uniforms (per-slot for WebGL 1 compatibility)
-    uniform float mouseEnabled;
     uniform float wakeStrength;
     uniform float wakeRadius;
     uniform float wakeAngle;
     uniform float wakeLength;
     uniform float wakeFrequency;
     uniform float wakeRippleSpeed;
-    uniform float wakeTint;
     uniform int mouseInstanceCount;
 ${wakeDecls.join('\n')}
 
-    // Sploosh (click/tap splash) uniforms
-    uniform float splooshEnabled;
     uniform float splooshStrength;
     uniform float splooshRadius;
     uniform float splooshFrequency;
     uniform float splooshSpeed;
-    uniform float splooshTint;
     uniform int splooshInstanceCount;
 ${splooshDecls.join('\n')}
 
@@ -96,61 +160,40 @@ ${splooshDecls.join('\n')}
 
     vec2 addWakeContribution(vec2 pos, vec2 vel, float alpha) {
         if (alpha <= 0.001) return vec2(0.0);
-
         float velMag = length(vel);
         if (velMag < 0.001) return vec2(0.0);
-
         vec2 moveDir = normalize(vel);
         vec2 perpDir = vec2(-moveDir.y, moveDir.x);
-
         vec2 toFrag = vUv - pos;
         float dist = length(toFrag);
         if (dist >= wakeRadius || dist < 0.0005) return vec2(0.0);
-
         float along = dot(toFrag, moveDir);
         float perp = dot(toFrag, perpDir);
         float absPerp = abs(perp);
-
         float distFalloff = 1.0 - dist / wakeRadius;
         distFalloff *= distFalloff;
-
-        // Smooth side factor: replaces sign(perp) to avoid center-line seam
         float smoothSide = perp / (absPerp + 0.005);
-
         vec2 displacement = vec2(0.0);
-
-        // V-shaped wake behind the movement
         float behind = max(0.0, -along);
         if (behind > 0.001) {
             float expectedPerp = behind * wakeAngle;
             float armDist = abs(absPerp - expectedPerp);
             float armThickness = 0.015 + behind * 0.05;
             float onArm = exp(-(armDist * armDist) / (armThickness * armThickness));
-
             float behindNorm = behind / max(wakeLength, 0.001);
             float lengthFade = (1.0 - smoothstep(0.6, 1.0, behindNorm)) * smoothstep(0.0, 0.01, behind);
-
-            // Primary ripple crests along the wake arms
-            float phase1 = behind * wakeFrequency - time * wakeRippleSpeed;
+            float phase1 = behind * wakeFrequency - uTime * wakeRippleSpeed;
             float ripple1 = sin(phase1);
-
-            // Secondary ripple layer for richer texture
-            float phase2 = behind * wakeFrequency * 0.6 - time * wakeRippleSpeed * 0.8 + 1.5;
+            float phase2 = behind * wakeFrequency * 0.6 - uTime * wakeRippleSpeed * 0.8 + 1.5;
             float ripple2 = sin(phase2) * 0.5;
-
             float ripple = ripple1 + ripple2 * 0.4;
-
             float armIntensity = onArm * lengthFade * ripple;
             displacement += perpDir * smoothSide * armIntensity;
-
-            // Spreading ripples: faint circular rings that propagate outward from the wake
-            float spreadPhase = dist * wakeFrequency * 0.8 - time * wakeRippleSpeed * 1.2;
+            float spreadPhase = dist * wakeFrequency * 0.8 - uTime * wakeRippleSpeed * 1.2;
             float spreadRipple = sin(spreadPhase) * 0.3;
             float spreadEnvelope = onArm * lengthFade * 0.4;
             displacement += normalize(toFrag) * spreadRipple * spreadEnvelope;
         }
-
-        // Bow wave: compression ahead of the movement
         float ahead = max(0.0, along);
         if (ahead > 0.0 && ahead < wakeRadius * 0.3) {
             float bowFade = 1.0 - ahead / (wakeRadius * 0.3);
@@ -158,144 +201,95 @@ ${splooshDecls.join('\n')}
             float perpFade = exp(-(absPerp * absPerp) / 0.004);
             displacement -= moveDir * bowFade * perpFade * 0.5;
         }
-
-        // Center push: water displaced outward near the object
         float centerSpread = 0.003;
         float centerFade = exp(-(dist * dist) / centerSpread);
-        if (centerFade > 0.01) {
-            displacement += normalize(toFrag) * centerFade * 0.4;
-        }
-
+        if (centerFade > 0.01) displacement += normalize(toFrag) * centerFade * 0.4;
         float speedFactor = min(velMag * 2.0, 1.0);
-        // Smooth alpha curve so the effect tapers naturally instead of cutting off abruptly
         float smoothAlpha = alpha * alpha * (3.0 - 2.0 * alpha);
         displacement *= distFalloff * speedFactor * wakeStrength * smoothAlpha * 0.15;
-
         return displacement;
     }
 
-    // Returns vec4(rawDispX, rawDispY, wavefrontEnvelope, 0)
-    // rawDisp: wave oscillation + burst, weighted by spread/behindFront but NOT Gaussian envelope
-    // wavefrontEnvelope: Gaussian envelope for max-combination across sources (enables interference)
     vec4 splooshSourceData(vec2 pos, float alpha, float age) {
         if (alpha <= 0.001 || age < 0.0) return vec4(0.0);
-
         vec2 toFrag = vUv - pos;
         float dist = length(toFrag);
         if (dist > splooshRadius || dist < 0.0001) return vec4(0.0);
-
         vec2 dir = normalize(toFrag);
         float normDist = dist / splooshRadius;
         float wavefront = age * splooshSpeed;
-
-        // Traveling circular wave
         float k = splooshFrequency;
         float omega = splooshSpeed * splooshFrequency;
         float wave = sin(k * dist - omega * age);
-
-        // Spatial gates
         float behindFront = smoothstep(wavefront + 0.008, wavefront - 0.005, dist);
         float spreadDecay = 1.0 / (1.0 + dist * 6.0);
         float radiusFade = 1.0 - normDist * normDist;
         float smoothAlpha = alpha * alpha * (3.0 - 2.0 * alpha);
-
-        // Wavefront Gaussian (computed separately for max-combination across sources)
         float waveDist = dist - wavefront;
         float envWidth = 0.012 + wavefront * 0.1;
         float gaussian = exp(-(waveDist * waveDist) / (2.0 * envWidth * envWidth));
-
-        // Impact crown burst at center
         float burstDecay = exp(-age * 5.0);
         float burstWidth = 0.01 + age * 0.025;
         float burst = exp(-(dist * dist) / (burstWidth * burstWidth)) * burstDecay;
-
-        // Raw wave signal (oscillation + burst, for interference summation)
         vec2 waveSignal = dir * wave * spreadDecay * behindFront;
         vec2 burstSignal = dir * burst * 2.5;
         vec2 rawDisp = (waveSignal + burstSignal) * smoothAlpha * radiusFade;
-
-        // Per-source wavefront envelope (Gaussian + radius + alpha)
         float srcEnv = gaussian * radiusFade * smoothAlpha;
-
         return vec4(rawDisp, srcEnv, 0.0);
     }
 
     void main() {
-        float maskStrength = texture2D(maskMap, vUv).r;
-        if (maskStrength < 0.00392) discard;
-
-        // AMBIENT RIPPLE
-        vec2 rippleUV = vUv * rippleScale + time * rippleSpeed;
-        vec3 normal = normalize(texture2D(rippleNormal, rippleUV).xyz * 2.0 - 1.0);
-
-        // WAKE INTERACTION — early spatial skip: only compute when fragment is near any instance
-        vec2 wakeDisplacement = vec2(0.0);
-        if (mouseEnabled > 0.5 && mouseInstanceCount > 0) {
-            float minWakeDist = 1.0;
-${wakeMinDist.join('\n')}
-            if (minWakeDist < wakeRadius) {
-${wakeContrib.join('\n')}
-            }
+        float maskStrength = texture2D(uMaskMap, vUv).r;
+        if (maskStrength < 0.00392) {
+            gl_FragColor = vec4(0.0, 0.0, 0.0, 0.0);
+            return;
         }
 
-        // SPLOOSH INTERACTION — early spatial skip: only compute when fragment is near any sploosh
-        vec2 splooshDisplacement = vec2(0.0);
-        if (splooshEnabled > 0.5 && splooshInstanceCount > 0) {
-            float minSplooshDist = 1.0;
-${splooshMinDist.join('\n')}
-            if (minSplooshDist < splooshRadius) {
+        vec2 px = 1.0 / uResolution;
+        vec2 uvL = clamp(vUv - vec2(px.x, 0.0), 0.0, 1.0);
+        vec2 uvR = clamp(vUv + vec2(px.x, 0.0), 0.0, 1.0);
+        vec2 uvU = clamp(vUv + vec2(0.0, px.y), 0.0, 1.0);
+        vec2 uvD = clamp(vUv - vec2(0.0, px.y), 0.0, 1.0);
+        vec2 center = texture2D(uPrevState, vUv).xy;
+        float maskL = texture2D(uMaskMap, uvL).r;
+        float maskR = texture2D(uMaskMap, uvR).r;
+        float maskU = texture2D(uMaskMap, uvU).r;
+        float maskD = texture2D(uMaskMap, uvD).r;
+        vec2 left = maskL > 0.004 ? texture2D(uPrevState, uvL).xy : center;
+        vec2 right = maskR > 0.004 ? texture2D(uPrevState, uvR).xy : center;
+        vec2 up = maskU > 0.004 ? texture2D(uPrevState, uvU).xy : center;
+        vec2 down = maskD > 0.004 ? texture2D(uPrevState, uvD).xy : center;
+        vec2 blurred = (center * 2.0 + left + right + up + down) / 6.0;
+        float blurredMag = length(blurred);
+        float dampFactor = blurredMag > 0.02 ? uDampingFactor * 0.88 : uDampingFactor;
+        vec2 damped = blurred * dampFactor;
+
+        vec2 impulse = vec2(0.0);
+        if (mouseInstanceCount > 0) {
+${wakeContrib.join('\n')}
+            impulse *= uWakeImpulseStrength;
+        }
+        if (splooshInstanceCount > 0) {
 ${splooshSourceVars.join('\n')}
 ${splooshSourceAssign.join('\n')}
-
             vec2 rawSum = ${splooshRawSum.join(' + ')};
             float combinedEnv = ${splooshCombinedEnvExpr};
-
             if (combinedEnv > 0.001) {
                 float rawMag = length(rawSum);
                 float satK = 3.0;
-                vec2 saturatedDisp = rawMag > 0.0001
-                    ? rawSum * (tanh(rawMag * satK) / (rawMag * satK))
-                    : vec2(0.0);
-
-                // Mask edge attenuation (only sampled when sploosh is actually visible here)
-                float edgeFade = 1.0;
-                if (maskStrength < 0.5) {
-                    float edgeDist = 0.003;
-                    float nearEdge = min(
-                        min(texture2D(maskMap, vUv + vec2(-edgeDist, 0.0)).r, texture2D(maskMap, vUv + vec2(edgeDist, 0.0)).r),
-                        min(texture2D(maskMap, vUv + vec2(0.0, edgeDist)).r, texture2D(maskMap, vUv + vec2(0.0, -edgeDist)).r)
-                    );
-                    edgeFade = smoothstep(0.0, 0.15, nearEdge);
-                }
-
-                splooshDisplacement = saturatedDisp * combinedEnv * splooshStrength * edgeFade * 0.15;
-            }
+                vec2 saturatedDisp = rawMag > 0.0001 ? rawSum * (tanh(rawMag * satK) / (rawMag * satK)) : vec2(0.0);
+                impulse += saturatedDisp * combinedEnv * splooshStrength * 0.15 * uSplooshImpulseStrength;
             }
         }
 
-        vec2 combinedDisplacement = normal.xy + wakeDisplacement + splooshDisplacement;
-        vec2 refractedUV = vUv + combinedDisplacement * refractionStrength * maskStrength;
-        vec4 bgColor = texture2D(map, refractedUV);
-
-        // Subtle tint in disturbed areas: darken troughs, lighten crests
-        float wakeMag = length(wakeDisplacement);
-        float splooshMag = length(splooshDisplacement);
-        float tintAmount = wakeMag * wakeTint + splooshMag * splooshTint;
-        vec3 tintedColor = bgColor.rgb * (1.0 - tintAmount * 0.6) + vec3(0.7, 0.85, 1.0) * tintAmount * 0.15;
-
-        gl_FragColor = vec4(tintedColor, maskStrength);
+        vec2 result = damped + impulse;
+        result *= maskStrength;
+        float mag = length(result);
+        if (mag > uMaxDisturbance) result *= uMaxDisturbance / mag;
+        gl_FragColor = vec4(result, 0.0, 0.0);
     }
 `;
 }
-
-const STENCIL_PREPASS_FRAGMENT = `
-    uniform sampler2D maskMap;
-    varying vec2 vUv;
-    void main() {
-        if (texture2D(maskMap, vUv).r < 0.00392) discard;
-        gl_FragColor = vec4(0.0);
-    }
-`;
 
 class WaterRippleEffect extends BaseEffect {
     constructor(scene, camera, renderer, parallaxInstance) {
@@ -307,7 +301,6 @@ class WaterRippleEffect extends BaseEffect {
         this.maxInstances = DEFAULT_MAX_WAKE_INSTANCES;
         this.currentInstanceIndex = -1;
         this.fadeInSpeed = 0.002;
-        this.fadeOutSpeed = 0.002;
         this.wasOverWater = false;
         this.lastMouseUV = new THREE.Vector2(-1, -1);
         
@@ -363,6 +356,16 @@ class WaterRippleEffect extends BaseEffect {
         this._splooshPosList = [];
         this._splooshAlphaList = [];
         this._splooshAgeList = [];
+
+        // Simulation (feedback-based disturbance texture)
+        this.simulationEnabled = false;
+        this.simRTRead = null;
+        this.simRTWrite = null;
+        this.simScene = null;
+        this.simMesh = null;
+        this.simMaterial = null;
+        this.simUniforms = null;
+        this._simResizeHandler = null;
 
         this.setupMouseTracking();
     }
@@ -478,10 +481,7 @@ class WaterRippleEffect extends BaseEffect {
             
             // Wake interaction config
             const mouseConfig = config.mouseInteraction || {};
-            const wakeInteractionFlag = this.parallax.getFlag('effects.water-ripple.wakeInteraction');
-            const mouseEnabled = wakeInteractionFlag && mouseConfig.enabled !== false;
             this.fadeInSpeed = mouseConfig.fadeInSpeed ?? mouseConfig.fadeSpeed ?? 0.002;
-            this.fadeOutSpeed = mouseConfig.fadeOutSpeed ?? mouseConfig.fadeSpeed ?? 0.002;
             this.maxLifetime = mouseConfig.maxLifetime ?? 12;
             this.velocityThreshold = mouseConfig.velocityThreshold ?? 0.1;
             this.velocityBufferSize = mouseConfig.velocitySmoothing ?? 5;
@@ -491,55 +491,45 @@ class WaterRippleEffect extends BaseEffect {
             
             // Sploosh interaction config
             const splooshConfig = config.splooshInteraction || {};
-            const splooshFlag = this.parallax.getFlag('effects.water-ripple.splooshInteraction');
-            const splooshEnabled = splooshFlag && splooshConfig.enabled !== false;
             this.splooshDuration = splooshConfig.duration ?? 3.0;
 
-            const effectUniforms = {
+            // Simulation config (feedback-based disturbance texture)
+            const simConfig = config.simulation || {};
+            this.simulationEnabled = simConfig.enabled === true;
+            const simResolution = Math.max(64, Math.min(1024, simConfig.resolution ?? 512));
+            const simDiffusion = simConfig.diffusionStrength ?? 0.5;
+            const simDamping = simConfig.dampingFactor ?? 0.86;
+            const simWakeContributionDuration = simConfig.wakeContributionDuration ?? 1.0;
+            const simMaxDisturbance = simConfig.maxDisturbance ?? 0.08;
+            const simWakeImpulse = simConfig.wakeImpulseStrength ?? 0.4;
+            const simSplooshImpulse = simConfig.splooshImpulseStrength ?? 1.0;
+
+            const effectUniforms = this.simulationEnabled ? {
+                map: { value: this.parallax.imageTexture },
+                maskMap: { value: maskTexture },
+                rippleNormal: { value: rippleTexture },
+                uDisturbanceTexture: { value: null },
+                time: { value: 0 },
+                rippleScale: { value: rippleScale },
+                rippleSpeed: { value: rippleSpeed },
+                refractionStrength: { value: refractionStrength },
+                wakeTint: { value: mouseConfig.wakeTint ?? 3.0 },
+                splooshTint: { value: splooshConfig.tint ?? 1.0 }
+            } : {
                 map: { value: this.parallax.imageTexture },
                 maskMap: { value: maskTexture },
                 rippleNormal: { value: rippleTexture },
                 time: { value: 0 },
                 rippleScale: { value: rippleScale },
                 rippleSpeed: { value: rippleSpeed },
-                refractionStrength: { value: refractionStrength },
-                // Wake uniforms
-                mouseEnabled: { value: mouseEnabled ? 1.0 : 0.0 },
-                wakeStrength: { value: mouseConfig.wakeStrength ?? mouseConfig.strength ?? 1.0 },
-                wakeRadius: { value: mouseConfig.wakeRadius ?? mouseConfig.radius ?? 0.15 },
-                wakeAngle: { value: mouseConfig.wakeAngle ?? 0.35 },
-                wakeLength: { value: mouseConfig.wakeLength ?? 0.25 },
-                wakeFrequency: { value: mouseConfig.wakeFrequency ?? 25.0 },
-                wakeRippleSpeed: { value: mouseConfig.wakeRippleSpeed ?? 2.0 },
-                wakeTint: { value: mouseConfig.wakeTint ?? 3.0 },
-                // Per-slot instance uniforms (dynamically generated)
-                mouseInstanceCount: { value: 0 },
-                ...Object.fromEntries(
-                    this._wakePosList.flatMap((name, i) => [
-                        [name, { value: new THREE.Vector2(-1, -1) }],
-                        [this._wakeVelList[i], { value: new THREE.Vector2(0, 0) }],
-                        [this._wakeAlphaList[i], { value: 0 }]
-                    ])
-                ),
-                // Sploosh uniforms
-                splooshEnabled: { value: splooshEnabled ? 1.0 : 0.0 },
-                splooshStrength: { value: splooshConfig.strength ?? 1.5 },
-                splooshRadius: { value: splooshConfig.radius ?? 0.2 },
-                splooshFrequency: { value: splooshConfig.frequency ?? 20.0 },
-                splooshSpeed: { value: splooshConfig.speed ?? 0.08 },
-                splooshTint: { value: splooshConfig.tint ?? 1.0 },
-                splooshInstanceCount: { value: 0 },
-                ...Object.fromEntries(
-                    this._splooshPosList.flatMap((name, i) => [
-                        [name, { value: new THREE.Vector2(-1, -1) }],
-                        [this._splooshAlphaList[i], { value: 0 }],
-                        [this._splooshAgeList[i], { value: 0 }]
-                    ])
-                )
+                refractionStrength: { value: refractionStrength }
             };
 
+            const fragmentShader = this.simulationEnabled
+                ? buildFragmentShaderWithDisturbance()
+                : buildFragmentShaderAmbientOnly();
             this.overlayMesh = this.createCoarseAreaEffectMesh(
-                buildFragmentShader(this.maxInstances, this.maxSplooshInstances),
+                fragmentShader,
                 effectUniforms,
                 { overlaySegments: config.overlaySegments ?? 64, depthWrite: false }
             );
@@ -592,6 +582,11 @@ class WaterRippleEffect extends BaseEffect {
             // #endregion
 
             this.uniforms = effectUniforms;
+
+            if (this.simulationEnabled) {
+                this.wakeContributionDuration = simWakeContributionDuration;
+                this._initSimulation(maskTexture, mouseConfig, splooshConfig, simResolution, simDiffusion, simDamping, simWakeContributionDuration, simMaxDisturbance, simWakeImpulse, simSplooshImpulse);
+            }
             this.time = 0;
             
             // Particle emitter for sploosh spout + speed spray
@@ -608,7 +603,7 @@ class WaterRippleEffect extends BaseEffect {
             
             this.isInitialized = true;
 
-            log(`WaterRippleEffect: Water ripple initialized (overlaySegments: ${config.overlaySegments ?? 64})`);
+            log(`WaterRippleEffect: Water ripple initialized (overlaySegments: ${config.overlaySegments ?? 64}, simulation: ${this.simulationEnabled})`);
         } catch (error) {
             console.error('WaterRippleEffect: Error during initialization:', error);
             throw error;
@@ -620,6 +615,112 @@ class WaterRippleEffect extends BaseEffect {
         this._cachedConfig = this.parallax?.config?.effects?.waterRipple || {};
         this._cachedConfigFrame = this._frameCounter;
         return this._cachedConfig;
+    }
+
+    _initSimulation(maskTexture, mouseConfig, splooshConfig, resolution, diffusionStrength, dampingFactor, wakeContributionDuration, maxDisturbance, wakeImpulseStrength, splooshImpulseStrength) {
+        const w = resolution;
+        const h = resolution;
+        const rtOptions = {
+            minFilter: THREE.LinearFilter,
+            magFilter: THREE.LinearFilter,
+            format: THREE.RGBAFormat,
+            type: THREE.FloatType,
+            stencilBuffer: false,
+            depthBuffer: false
+        };
+        this.simRTRead = new THREE.WebGLRenderTarget(w, h, rtOptions);
+        this.simRTWrite = new THREE.WebGLRenderTarget(w, h, rtOptions);
+        this.simUniforms = {
+            uPrevState: { value: this.simRTRead.texture },
+            uMaskMap: { value: maskTexture },
+            uResolution: { value: new THREE.Vector2(w, h) },
+            uTime: { value: 0 },
+            uDiffusionStrength: { value: diffusionStrength },
+            uDampingFactor: { value: dampingFactor },
+            uMaxDisturbance: { value: maxDisturbance },
+            uWakeImpulseStrength: { value: wakeImpulseStrength },
+            uSplooshImpulseStrength: { value: splooshImpulseStrength },
+            wakeStrength: { value: mouseConfig.wakeStrength ?? mouseConfig.strength ?? 1.0 },
+            wakeRadius: { value: mouseConfig.wakeRadius ?? mouseConfig.radius ?? 0.15 },
+            wakeAngle: { value: mouseConfig.wakeAngle ?? 0.35 },
+            wakeLength: { value: mouseConfig.wakeLength ?? 0.25 },
+            wakeFrequency: { value: mouseConfig.wakeFrequency ?? 25.0 },
+            wakeRippleSpeed: { value: mouseConfig.wakeRippleSpeed ?? 2.0 },
+            mouseInstanceCount: { value: 0 },
+            ...Object.fromEntries(
+                this._wakePosList.flatMap((name, i) => [
+                    [name, { value: new THREE.Vector2(-1, -1) }],
+                    [this._wakeVelList[i], { value: new THREE.Vector2(0, 0) }],
+                    [this._wakeAlphaList[i], { value: 0 }]
+                ])
+            ),
+            splooshStrength: { value: splooshConfig.strength ?? 1.5 },
+            splooshRadius: { value: splooshConfig.radius ?? 0.2 },
+            splooshFrequency: { value: splooshConfig.frequency ?? 20.0 },
+            splooshSpeed: { value: splooshConfig.speed ?? 0.08 },
+            splooshInstanceCount: { value: 0 },
+            ...Object.fromEntries(
+                this._splooshPosList.flatMap((name, i) => [
+                    [name, { value: new THREE.Vector2(-1, -1) }],
+                    [this._splooshAlphaList[i], { value: 0 }],
+                    [this._splooshAgeList[i], { value: 0 }]
+                ])
+            )
+        };
+        const simVertexShader = `
+            varying vec2 vUv;
+            void main() {
+                vUv = uv;
+                gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+            }
+        `;
+        this.simMaterial = new THREE.ShaderMaterial({
+            vertexShader: simVertexShader,
+            fragmentShader: buildSimulationFragmentShader(this.maxInstances, this.maxSplooshInstances),
+            uniforms: this.simUniforms,
+            depthTest: false,
+            depthWrite: false
+        });
+        const simGeometry = new THREE.PlaneGeometry(2, 2);
+        this.simMesh = new THREE.Mesh(simGeometry, this.simMaterial);
+        this.simScene = new THREE.Scene();
+        this.simScene.add(this.simMesh);
+        this.simCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+        this.materials.push(this.simMaterial);
+        this.uniforms.uDisturbanceTexture.value = this.simRTRead.texture;
+        const resizeHandler = () => this._resizeSimulationRTs();
+        window.addEventListener('resize', resizeHandler);
+        this._simResizeHandler = resizeHandler;
+        log(`WaterRippleEffect: Simulation initialized (${w}x${h})`);
+    }
+
+    _resizeSimulationRTs(newResolution) {
+        if (!this.simRTRead || !this.simRTWrite) return;
+        const config = this.getConfig();
+        const simConfig = config.simulation || {};
+        const res = newResolution != null
+            ? Math.max(64, Math.min(1024, newResolution))
+            : Math.max(64, Math.min(1024, simConfig.resolution ?? 512));
+        this.simRTRead.setSize(res, res);
+        this.simRTWrite.setSize(res, res);
+        if (this.simUniforms?.uResolution?.value) {
+            this.simUniforms.uResolution.value.set(res, res);
+        }
+    }
+
+    renderPrePass(renderer, camera) {
+        if (!this.simulationEnabled || !this.simScene || !this.simRTRead || !this.simRTWrite) return;
+        const prevRT = renderer.getRenderTarget();
+        renderer.setRenderTarget(this.simRTWrite);
+        renderer.clear();
+        this.simUniforms.uPrevState.value = this.simRTRead.texture;
+        this.simUniforms.uTime.value = this.time;
+        renderer.render(this.simScene, this.simCamera);
+        const tmp = this.simRTRead;
+        this.simRTRead = this.simRTWrite;
+        this.simRTWrite = tmp;
+        this.uniforms.uDisturbanceTexture.value = this.simRTRead.texture;
+        renderer.setRenderTarget(prevRT);
     }
 
     _getCanvasRect() {
@@ -664,13 +765,11 @@ class WaterRippleEffect extends BaseEffect {
     
     updateMouseInteraction(deltaTime) {
         if (!this.uniforms || !this.parallax || !this.overlayMesh) return;
-        
+        if (!this.simulationEnabled) return; // Wake only used when simulation is on
+
         const wakeInteraction = this.parallax.getFlag('effects.water-ripple.wakeInteraction');
         const mouseConfig = this.getConfig().mouseInteraction || {};
         const shouldBeEnabled = wakeInteraction && mouseConfig.enabled !== false;
-        
-        // Update uniform immediately when flag changes
-        this.uniforms.mouseEnabled.value = shouldBeEnabled ? 1.0 : 0.0;
         
         if (!shouldBeEnabled) {
             this.rippleInstances = [];
@@ -743,7 +842,6 @@ class WaterRippleEffect extends BaseEffect {
                     const inst = this.rippleInstances[this.currentInstanceIndex];
                     inst.position.copy(this.easedPosition);
                     inst.velocity.copy(smoothedVelocity);
-                    inst.targetAlpha = 1.0;
                     
                     // Drop trail breadcrumbs along the path
                     const distFromLastBreadcrumb = this.easedPosition.distanceTo(this.lastBreadcrumbPos);
@@ -801,18 +899,6 @@ class WaterRippleEffect extends BaseEffect {
     }
     
     deactivateCurrentWake() {
-        if (this.currentInstanceIndex >= 0 && this.currentInstanceIndex < this.rippleInstances.length) {
-            const inst = this.rippleInstances[this.currentInstanceIndex];
-            inst.targetAlpha = 0.0;
-            inst.fadeOutStartTime = this.time;
-            inst.fadeOutStartAlpha = inst.alpha;
-            // Store the frozen velocity magnitude for proportional reduction during fade
-            const velMag = inst.velocity.length();
-            inst.frozenVelMag = Math.max(velMag, 0.05);
-            if (velMag < 0.05) {
-                inst.velocity.normalize().multiplyScalar(0.05);
-            }
-        }
         this.currentInstanceIndex = -1;
         this.wakeActive = false;
     }
@@ -825,12 +911,6 @@ class WaterRippleEffect extends BaseEffect {
             position: position.clone(),
             velocity: velocity.clone(),
             alpha: 0.8,
-            targetAlpha: 0.0,
-            fadeOutStartTime: this.time,
-            fadeOutStartAlpha: 0.8,
-            fadeInSpeed: this.fadeInSpeed,
-            fadeOutSpeed: this.fadeOutSpeed,
-            frozenVelMag: Math.max(velocity.length(), 0.05),
             createdAt: this.time
         };
         
@@ -865,9 +945,6 @@ class WaterRippleEffect extends BaseEffect {
             position: position.clone(),
             velocity: velocity.clone(),
             alpha: 0.0, // Start at 0, will fade in
-            targetAlpha: 1.0,
-            fadeInSpeed: this.fadeInSpeed,
-            fadeOutSpeed: this.fadeOutSpeed,
             createdAt: this.time
         };
         
@@ -900,26 +977,15 @@ class WaterRippleEffect extends BaseEffect {
                 if (age >= maxAge) continue;
             }
 
-            // Update fade
-            if (instance.targetAlpha === 0.0 && instance.fadeOutStartTime !== undefined) {
-                const fadeOutDuration = 1.0 / Math.max(instance.fadeOutSpeed, 0.0001);
-                const elapsed = this.time - instance.fadeOutStartTime;
-                const t = Math.min(elapsed / fadeOutDuration, 1.0);
-                instance.alpha = instance.fadeOutStartAlpha * (1.0 - t);
-                if (t >= 1.0) instance.alpha = 0;
-                
-                if (instance.frozenVelMag > 0) {
-                    const targetVelMag = instance.frozenVelMag * (1.0 - t);
-                    instance.velocity.normalize().multiplyScalar(Math.max(targetVelMag, 0.0001));
-                }
-            } else {
-                const fadeTime = 1.0 / Math.max(instance.fadeInSpeed, 0.0001);
+            // Update fade: simulation uses fade-in only for active wake; texture decay handles the rest
+            if (isActive) {
+                const fadeTime = 1.0 / Math.max(this.fadeInSpeed, 0.0001);
                 const fadeFactor = Math.pow(0.5, deltaTime / fadeTime);
-                instance.alpha = instance.targetAlpha + (instance.alpha - instance.targetAlpha) * fadeFactor;
+                instance.alpha = 1.0 + (instance.alpha - 1.0) * fadeFactor;
             }
 
-            // Remove fully faded (but never remove active)
-            if (instance.alpha <= 0 && !isActive) continue;
+            // Evict by lifetime only (simulation texture handles visual decay)
+            if (!isActive && instance.alpha <= 0) continue;
 
             this.rippleInstances[writeIdx++] = instance;
         }
@@ -928,21 +994,31 @@ class WaterRippleEffect extends BaseEffect {
     }
     
     updateInstanceUniforms() {
-        if (!this.uniforms) return;
-        
+        if (!this.simulationEnabled || !this.simUniforms) return;
+
         const count = Math.min(this.rippleInstances.length, this.maxInstances);
-        this.uniforms.mouseInstanceCount.value = count;
-        
+        this.simUniforms.mouseInstanceCount.value = count;
+        const currentRef = this.currentInstanceIndex >= 0 && this.rippleInstances[this.currentInstanceIndex]
+            ? this.rippleInstances[this.currentInstanceIndex]
+            : null;
+
         for (let i = 0; i < this.maxInstances; i++) {
             if (i < count) {
                 const instance = this.rippleInstances[i];
-                this.uniforms[this._wakePosList[i]].value.copy(instance.position);
-                this.uniforms[this._wakeVelList[i]].value.copy(instance.velocity);
-                this.uniforms[this._wakeAlphaList[i]].value = instance.alpha;
+                this.simUniforms[this._wakePosList[i]].value.copy(instance.position);
+                this.simUniforms[this._wakeVelList[i]].value.copy(instance.velocity);
+                let alpha = instance.alpha;
+                if (instance !== currentRef) {
+                    const age = this.time - (instance.createdAt ?? 0);
+                    const dur = this.wakeContributionDuration ?? 1.0;
+                    if (age >= dur) alpha = 0;
+                    else if (age > dur * 0.5) alpha *= 1.0 - (age - dur * 0.5) / (dur * 0.5);
+                }
+                this.simUniforms[this._wakeAlphaList[i]].value = alpha;
             } else {
-                this.uniforms[this._wakePosList[i]].value.set(-1, -1);
-                this.uniforms[this._wakeVelList[i]].value.set(0, 0);
-                this.uniforms[this._wakeAlphaList[i]].value = 0.0;
+                this.simUniforms[this._wakePosList[i]].value.set(-1, -1);
+                this.simUniforms[this._wakeVelList[i]].value.set(0, 0);
+                this.simUniforms[this._wakeAlphaList[i]].value = 0.0;
             }
         }
     }
@@ -1071,14 +1147,12 @@ class WaterRippleEffect extends BaseEffect {
     }
     
     updateSplooshInteraction(deltaTime) {
-        if (!this.uniforms) return;
-        
+        if (!this.simulationEnabled) return; // Sploosh only used when simulation is on
+
         const splooshFlag = this.parallax.getFlag('effects.water-ripple.splooshInteraction');
         const splooshConfig = this.getConfig().splooshInteraction || {};
         const shouldBeEnabled = splooshFlag && splooshConfig.enabled !== false;
-        
-        this.uniforms.splooshEnabled.value = shouldBeEnabled ? 1.0 : 0.0;
-        
+
         if (!shouldBeEnabled) {
             this.splooshInstances = [];
             this.updateSplooshUniforms();
@@ -1100,21 +1174,21 @@ class WaterRippleEffect extends BaseEffect {
     }
     
     updateSplooshUniforms() {
-        if (!this.uniforms) return;
-        
+        if (!this.simulationEnabled || !this.simUniforms) return;
+
         const count = Math.min(this.splooshInstances.length, this.maxSplooshInstances);
-        this.uniforms.splooshInstanceCount.value = count;
-        
+        this.simUniforms.splooshInstanceCount.value = count;
+
         for (let i = 0; i < this.maxSplooshInstances; i++) {
             if (i < count) {
                 const inst = this.splooshInstances[i];
-                this.uniforms[this._splooshPosList[i]].value.copy(inst.position);
-                this.uniforms[this._splooshAlphaList[i]].value = inst.alpha;
-                this.uniforms[this._splooshAgeList[i]].value = this.time - inst.birthTime;
+                this.simUniforms[this._splooshPosList[i]].value.copy(inst.position);
+                this.simUniforms[this._splooshAlphaList[i]].value = inst.alpha;
+                this.simUniforms[this._splooshAgeList[i]].value = this.time - inst.birthTime;
             } else {
-                this.uniforms[this._splooshPosList[i]].value.set(-1, -1);
-                this.uniforms[this._splooshAlphaList[i]].value = 0.0;
-                this.uniforms[this._splooshAgeList[i]].value = 0.0;
+                this.simUniforms[this._splooshPosList[i]].value.set(-1, -1);
+                this.simUniforms[this._splooshAlphaList[i]].value = 0.0;
+                this.simUniforms[this._splooshAgeList[i]].value = 0.0;
             }
         }
     }
@@ -1286,7 +1360,29 @@ class WaterRippleEffect extends BaseEffect {
             this.particleEmitter.cleanup();
             this.particleEmitter = null;
         }
-        
+
+        // Clean up simulation
+        if (this._simResizeHandler) {
+            window.removeEventListener('resize', this._simResizeHandler);
+            this._simResizeHandler = null;
+        }
+        if (this.simRTRead) {
+            this.simRTRead.dispose();
+            this.simRTRead = null;
+        }
+        if (this.simRTWrite) {
+            this.simRTWrite.dispose();
+            this.simRTWrite = null;
+        }
+        if (this.simMesh?.geometry) {
+            this.simMesh.geometry.dispose();
+        }
+        this.simScene = null;
+        this.simMesh = null;
+        this.simMaterial = null;
+        this.simUniforms = null;
+        this.simulationEnabled = false;
+
         // Remove mouse/touch tracking event listeners
         if (this.parallax && this.parallax.canvas) {
             if (this._mouseMoveHandler) {

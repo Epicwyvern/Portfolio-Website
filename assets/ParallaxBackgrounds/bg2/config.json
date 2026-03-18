@@ -394,6 +394,16 @@
     "waterRipple": {
       "maxWakeInstances": 16,
       "maxSplooshInstances": 16,
+      "simulation": {
+        "enabled": true,
+        "resolution": 512,
+        "diffusionStrength": 1.0,
+        "dampingFactor": 1,
+        "wakeContributionDuration": 7.0,
+        "maxDisturbance": 1.0,
+        "wakeImpulseStrength": 0.7,
+        "splooshImpulseStrength": 1.0
+      },
       "maskPath": "assets/bg2WaterMask.webp",
       "maskPattern": "bg2WaterBW*.webp",
       "ripplePath": "assets/waterripplenormal.webp",
@@ -405,7 +415,7 @@
         "enabled": true,
         "wakeStrength": 15.0,
         "wakeRadius": 0.1,
-        "wakeAngle": 0.5,
+        "wakeAngle": 0.35,
         "wakeLength": 1,
         "wakeFrequency": 25.0,
         "wakeRippleSpeed": 2.5,
@@ -416,12 +426,11 @@
         "positionEasingMax": 0.5,
         "trailSpacing": 0.2,
         "fadeInSpeed": 10,
-        "fadeOutSpeed": 0.1,
         "maxLifetime": 12
       },
       "splooshInteraction": {
         "enabled": true,
-        "strength": 40.0,
+        "strength": 25.0,
         "radius": 0.1,
         "frequency": 200.0,
         "speed": 0.08,
