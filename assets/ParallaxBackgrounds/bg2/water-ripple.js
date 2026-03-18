@@ -528,12 +528,19 @@ class WaterRippleEffect extends BaseEffect {
             const fragmentShader = this.simulationEnabled
                 ? buildFragmentShaderWithDisturbance()
                 : buildFragmentShaderAmbientOnly();
+            const depthBias = config.depthBias ?? 0.02;
             this.overlayMesh = this.createCoarseAreaEffectMesh(
                 fragmentShader,
                 effectUniforms,
-                { overlaySegments: config.overlaySegments ?? 64, depthWrite: false }
+                {
+                    overlaySegments: config.overlaySegments ?? 64,
+                    depthWrite: false,
+                    polygonOffset: true,
+                    polygonOffsetFactor: 1,
+                    polygonOffsetUnits: 2
+                }
             );
-            this.overlayMesh.position.z = 0.01;
+            this.overlayMesh.position.z = depthBias;
 
             // Stencil prepass: cheap mask-only shader runs first; main water shader only runs where stencil is set
             // Share geometry with main overlay (no clone) — both meshes reference the same BufferGeometry
@@ -555,7 +562,7 @@ class WaterRippleEffect extends BaseEffect {
                 stencilRef: 1
             });
             this.stencilPrepassMesh = new THREE.Mesh(prepassGeometry, prepassMaterial);
-            this.stencilPrepassMesh.position.z = 0.009;
+            this.stencilPrepassMesh.position.z = depthBias - 0.001;
             this.stencilPrepassMesh.renderOrder = -1;
             this.meshes.push(this.stencilPrepassMesh);
             this.materials.push(prepassMaterial);
@@ -756,10 +763,11 @@ class WaterRippleEffect extends BaseEffect {
         }
 
         this.syncWithParallaxMesh(this.overlayMesh);
-        this.overlayMesh.position.z = 0.01;
+        const depthBias = this.getConfig().depthBias ?? 0.02;
+        this.overlayMesh.position.z = depthBias;
         if (this.stencilPrepassMesh) {
             this.syncWithParallaxMesh(this.stencilPrepassMesh);
-            this.stencilPrepassMesh.position.z = 0.009;
+            this.stencilPrepassMesh.position.z = depthBias - 0.001;
         }
     }
     
