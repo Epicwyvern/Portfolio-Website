@@ -10,15 +10,6 @@ const log = (...args) => {
     }
 };
 
-// Try to import GSAP, fall back to manual animations if not available
-let gsap = null;
-try {
-    gsap = await import('../../../node_modules/gsap/index.js').then(module => module.gsap);
-    log('LanternEffect: GSAP loaded successfully');
-} catch (error) {
-    log('LanternEffect: GSAP not available, using manual animations');
-}
-
 class LanternEffect extends BaseEffect {
     async init() {
         log('LanternEffect: Initializing twinkling lantern effect');
@@ -129,7 +120,6 @@ class LanternEffect extends BaseEffect {
                 if (this._disabledLanterns?.has(system.name)) {
                     if (system.particles.length > 0) {
                         system.particles.forEach((p) => {
-                            if (p.gsapAnimation) { p.gsapAnimation.kill(); p.gsapAnimation = null; }
                             this.scene.remove(p.mesh);
                             p.mesh.geometry.dispose();
                             p.mesh.material.dispose();
@@ -157,12 +147,6 @@ class LanternEffect extends BaseEffect {
                     
                     // Check if particle has exceeded its lifetime
                     if (particle.age >= particle.lifetime) {
-                // Clean up GSAP animation if it exists
-                if (particle.gsapAnimation) {
-                    particle.gsapAnimation.kill();
-                    particle.gsapAnimation = null;
-                }
-                
                 // Remove particle
                 this.scene.remove(particle.mesh);
                 particle.mesh.geometry.dispose();
@@ -359,8 +343,6 @@ class LanternEffect extends BaseEffect {
                 maxOpacity: system.config.opacity || 0.8,
                 color: system.config.color || 0xffaa44,
                 initialRotation: randomRotation,
-                gsapAnimation: null, // Store GSAP animation reference
-                useGSAP: gsap !== null && (system.config.useGSAP !== false), // Allow disabling GSAP per system
                 colorObj: new THREE.Color(system.config.color || 0xffaa44),
                 glowColor: new THREE.Color(system.config.color || 0xffaa44)
             };
@@ -373,66 +355,9 @@ class LanternEffect extends BaseEffect {
             
             system.particles.push(particleData);
             
-            // Initialize GSAP animation if available
-            if (particleData.useGSAP && gsap) {
-                this.initGSAPAnimation(particleData, system);
-            }
-            
         } catch (error) {
             console.error('LanternEffect: Error spawning particle:', error);
         }
-    }
-    
-    initGSAPAnimation(particle, system) {
-        const mesh = particle.mesh;
-        const material = mesh.material;
-        
-        // Create GSAP timeline for smooth, professional animations
-        const timeline = gsap.timeline({
-            onComplete: () => {
-                // Particle will be cleaned up by the regular update loop
-                particle.gsapAnimation = null;
-            }
-        });
-        
-        // Scale animation with professional easing
-        timeline.fromTo(mesh.scale, 
-            { x: 0, y: 0, z: 1 }, // From
-            { 
-                x: particle.growthSpeed * particle.lifetime * particle.baseScale,
-                y: particle.growthSpeed * particle.lifetime * particle.baseScale,
-                z: 1,
-                duration: particle.lifetime,
-                ease: "power2.out"
-            }
-        );
-        
-        // Opacity animation with precise timing
-        timeline.fromTo(material, 
-            { opacity: 0 }, // From
-            { 
-                opacity: particle.maxOpacity,
-                duration: particle.lifetime * 0.2, // Fade in first 20%
-                ease: "power1.out"
-            }, 0 // Start immediately
-        )
-        .to(material, {
-            opacity: 0,
-            duration: particle.lifetime * 0.3, // Fade out last 30%
-            ease: "power2.in"
-        }, particle.lifetime * 0.7); // Start at 70% of lifetime
-        
-        // Optional: Subtle rotation animation
-        if (system.config.enableRotation !== false) {
-            timeline.to(mesh.rotation, {
-                z: particle.initialRotation + Math.PI * 0.5, // Quarter turn
-                duration: particle.lifetime,
-                ease: "none" // Linear rotation
-            }, 0);
-        }
-        
-        // Store reference for cleanup
-        particle.gsapAnimation = timeline;
     }
     
     updateParticle(particle, system) {
@@ -440,45 +365,33 @@ class LanternEffect extends BaseEffect {
             const mesh = particle.mesh;
             const lifeProgress = particle.age / particle.lifetime;
             
-            // If using GSAP, only handle position updates (GSAP handles scale/opacity)
-            if (particle.useGSAP && particle.gsapAnimation) {
-                // GSAP is handling scale and opacity animations
-                // We only need to update position for parallax movement
+            // Continuous growth animation: grows throughout lifetime based on growthSpeed
+            const currentScale = particle.growthSpeed * particle.age * particle.baseScale;
+            mesh.scale.set(currentScale, currentScale, 1);
+            
+            // Opacity animation: fade in, stay bright, then fade out
+            let opacityProgress;
+            if (lifeProgress < 0.2) {
+                // Fade in phase (0 to 20% of lifetime)
+                opacityProgress = lifeProgress / 0.2;
+                opacityProgress = this.easeOutQuad(opacityProgress);
+            } else if (lifeProgress < 0.7) {
+                // Bright phase (20% to 70% of lifetime)
+                opacityProgress = 1.0;
             } else {
-                // Manual animation fallback
-                // Continuous growth animation: grows throughout lifetime based on growthSpeed
-                const currentScale = particle.growthSpeed * particle.age * particle.baseScale;
-                mesh.scale.set(currentScale, currentScale, 1);
-                
-                // Opacity animation: fade in, stay bright, then fade out
-                let opacityProgress;
-                if (lifeProgress < 0.2) {
-                    // Fade in phase (0 to 20% of lifetime)
-                    opacityProgress = lifeProgress / 0.2;
-                    opacityProgress = this.easeOutQuad(opacityProgress);
-                } else if (lifeProgress < 0.7) {
-                    // Bright phase (20% to 70% of lifetime)
-                    opacityProgress = 1.0;
-                } else {
-                    // Fade out phase (70% to 100% of lifetime)
-                    const fadeProgress = (lifeProgress - 0.7) / 0.3;
-                    opacityProgress = 1.0 - this.easeInQuad(fadeProgress);
-                }
-                
-                mesh.material.opacity = opacityProgress * particle.maxOpacity;
+                // Fade out phase (70% to 100% of lifetime)
+                const fadeProgress = (lifeProgress - 0.7) / 0.3;
+                opacityProgress = 1.0 - this.easeInQuad(fadeProgress);
             }
             
-            // Color tinting for glow effect (only for manual animation to avoid conflicts with GSAP)
-            if (!(particle.useGSAP && particle.gsapAnimation)) {
-                const currentOpacity = mesh.material.opacity;
-                const normalizedOpacity = currentOpacity / particle.maxOpacity;
-                const glowIntensity = 0.5 + normalizedOpacity * 0.5;
-                particle.glowColor.copy(particle.colorObj).multiplyScalar(glowIntensity);
-                mesh.material.color.copy(particle.glowColor);
-            } else {
-                // For GSAP, use simple color without opacity-based intensity changes
-                mesh.material.color.copy(particle.colorObj);
-            }
+            mesh.material.opacity = opacityProgress * particle.maxOpacity;
+            
+            // Color tinting for glow effect
+            const currentOpacity = mesh.material.opacity;
+            const normalizedOpacity = currentOpacity / particle.maxOpacity;
+            const glowIntensity = 0.5 + normalizedOpacity * 0.5;
+            particle.glowColor.copy(particle.colorObj).multiplyScalar(glowIntensity);
+            mesh.material.color.copy(particle.glowColor);
             
             // Apply parallax movement - sync with main mesh movement
             let parallaxOffsetX = 0;
@@ -520,7 +433,7 @@ class LanternEffect extends BaseEffect {
         return blendModes[blendModeString] || THREE.AdditiveBlending;
     }
     
-    // GSAP-compatible easing functions for smooth animations
+    // Easing functions for smooth animations
     easeOutCubic(t) {
         return 1 - Math.pow(1 - t, 3);
     }
@@ -537,7 +450,6 @@ class LanternEffect extends BaseEffect {
         return t * t;
     }
     
-    // Advanced easing functions (can be replaced with GSAP when integrated)
     easeInOutQuart(t) {
         return t < 0.5 ? 8 * t * t * t * t : 1 - Math.pow(-2 * t + 2, 4) / 2;
     }
@@ -705,12 +617,6 @@ class LanternEffect extends BaseEffect {
         if (this.lanternSystems) {
             this.lanternSystems.forEach(system => {
                 system.particles.forEach(particle => {
-                    // Clean up GSAP animations
-                    if (particle.gsapAnimation) {
-                        particle.gsapAnimation.kill();
-                        particle.gsapAnimation = null;
-                    }
-                    
                     if (particle.mesh) {
                         this.scene.remove(particle.mesh);
                         if (particle.mesh.geometry) particle.mesh.geometry.dispose();

@@ -12,7 +12,56 @@ const log = (...args) => {
     }
 };
 
-const DEFAULT_FRAGMENT_SHADER = `
+// Default max instance counts (configurable via config.json). Higher values allow more
+// simultaneous wake trail breadcrumbs + sploosh effects without eviction.
+const DEFAULT_MAX_WAKE_INSTANCES = 64;
+const DEFAULT_MAX_SPLOOSH_INSTANCES = 64;
+
+/**
+ * Builds the fragment shader with configurable instance counts.
+ * WebGL 1 compatibility: no uniform arrays, so we generate per-slot uniforms.
+ */
+function buildFragmentShader(maxWake, maxSploosh) {
+    const wakeDecls = [];
+    const splooshDecls = [];
+    for (let i = 0; i < maxWake; i++) {
+        wakeDecls.push(`    uniform vec2 mouseInstancePos${i};`);
+        wakeDecls.push(`    uniform vec2 mouseInstanceVel${i};`);
+        wakeDecls.push(`    uniform float mouseInstanceAlpha${i};`);
+    }
+    for (let i = 0; i < maxSploosh; i++) {
+        splooshDecls.push(`    uniform vec2 splooshPos${i};`);
+        splooshDecls.push(`    uniform float splooshAlpha${i};`);
+        splooshDecls.push(`    uniform float splooshAge${i};`);
+    }
+
+    const wakeMinDist = [];
+    const wakeContrib = [];
+    for (let i = 0; i < maxWake; i++) {
+        wakeMinDist.push(`            if (mouseInstanceCount > ${i}) minWakeDist = min(minWakeDist, length(vUv - mouseInstancePos${i}));`);
+        wakeContrib.push(`                if (mouseInstanceCount > ${i}) wakeDisplacement += addWakeContribution(mouseInstancePos${i}, mouseInstanceVel${i}, mouseInstanceAlpha${i});`);
+    }
+
+    const splooshMinDist = [];
+    const splooshSourceVars = [];
+    const splooshSourceAssign = [];
+    const splooshRawSum = [];
+    for (let i = 0; i < maxSploosh; i++) {
+        splooshMinDist.push(`            if (splooshInstanceCount > ${i}) minSplooshDist = min(minSplooshDist, length(vUv - splooshPos${i}));`);
+        splooshSourceVars.push(`            vec4 s${i} = vec4(0.0);`);
+        splooshSourceAssign.push(`            if (splooshInstanceCount > ${i}) s${i} = splooshSourceData(splooshPos${i}, splooshAlpha${i}, splooshAge${i});`);
+        splooshRawSum.push(`s${i}.xy`);
+    }
+    // Build max(s0.z, s1.z, ..., sN.z) as a binary tree (GLSL max takes 2 args)
+    const envParts = Array.from({ length: maxSploosh }, (_, i) => `s${i}.z`);
+    const buildMaxTree = (arr) => {
+        if (arr.length === 1) return arr[0];
+        const mid = Math.ceil(arr.length / 2);
+        return `max(${buildMaxTree(arr.slice(0, mid))}, ${buildMaxTree(arr.slice(mid))})`;
+    };
+    const splooshCombinedEnvExpr = buildMaxTree(envParts);
+
+    return `
     uniform sampler2D map;
     uniform sampler2D maskMap;
     uniform sampler2D rippleNormal;
@@ -31,30 +80,7 @@ const DEFAULT_FRAGMENT_SHADER = `
     uniform float wakeRippleSpeed;
     uniform float wakeTint;
     uniform int mouseInstanceCount;
-    uniform vec2 mouseInstancePos0;
-    uniform vec2 mouseInstancePos1;
-    uniform vec2 mouseInstancePos2;
-    uniform vec2 mouseInstancePos3;
-    uniform vec2 mouseInstancePos4;
-    uniform vec2 mouseInstancePos5;
-    uniform vec2 mouseInstancePos6;
-    uniform vec2 mouseInstancePos7;
-    uniform vec2 mouseInstanceVel0;
-    uniform vec2 mouseInstanceVel1;
-    uniform vec2 mouseInstanceVel2;
-    uniform vec2 mouseInstanceVel3;
-    uniform vec2 mouseInstanceVel4;
-    uniform vec2 mouseInstanceVel5;
-    uniform vec2 mouseInstanceVel6;
-    uniform vec2 mouseInstanceVel7;
-    uniform float mouseInstanceAlpha0;
-    uniform float mouseInstanceAlpha1;
-    uniform float mouseInstanceAlpha2;
-    uniform float mouseInstanceAlpha3;
-    uniform float mouseInstanceAlpha4;
-    uniform float mouseInstanceAlpha5;
-    uniform float mouseInstanceAlpha6;
-    uniform float mouseInstanceAlpha7;
+${wakeDecls.join('\n')}
 
     // Sploosh (click/tap splash) uniforms
     uniform float splooshEnabled;
@@ -64,30 +90,7 @@ const DEFAULT_FRAGMENT_SHADER = `
     uniform float splooshSpeed;
     uniform float splooshTint;
     uniform int splooshInstanceCount;
-    uniform vec2 splooshPos0;
-    uniform vec2 splooshPos1;
-    uniform vec2 splooshPos2;
-    uniform vec2 splooshPos3;
-    uniform vec2 splooshPos4;
-    uniform vec2 splooshPos5;
-    uniform vec2 splooshPos6;
-    uniform vec2 splooshPos7;
-    uniform float splooshAlpha0;
-    uniform float splooshAlpha1;
-    uniform float splooshAlpha2;
-    uniform float splooshAlpha3;
-    uniform float splooshAlpha4;
-    uniform float splooshAlpha5;
-    uniform float splooshAlpha6;
-    uniform float splooshAlpha7;
-    uniform float splooshAge0;
-    uniform float splooshAge1;
-    uniform float splooshAge2;
-    uniform float splooshAge3;
-    uniform float splooshAge4;
-    uniform float splooshAge5;
-    uniform float splooshAge6;
-    uniform float splooshAge7;
+${splooshDecls.join('\n')}
 
     varying vec2 vUv;
 
@@ -229,23 +232,9 @@ const DEFAULT_FRAGMENT_SHADER = `
         vec2 wakeDisplacement = vec2(0.0);
         if (mouseEnabled > 0.5 && mouseInstanceCount > 0) {
             float minWakeDist = 1.0;
-            if (mouseInstanceCount > 0) minWakeDist = min(minWakeDist, length(vUv - mouseInstancePos0));
-            if (mouseInstanceCount > 1) minWakeDist = min(minWakeDist, length(vUv - mouseInstancePos1));
-            if (mouseInstanceCount > 2) minWakeDist = min(minWakeDist, length(vUv - mouseInstancePos2));
-            if (mouseInstanceCount > 3) minWakeDist = min(minWakeDist, length(vUv - mouseInstancePos3));
-            if (mouseInstanceCount > 4) minWakeDist = min(minWakeDist, length(vUv - mouseInstancePos4));
-            if (mouseInstanceCount > 5) minWakeDist = min(minWakeDist, length(vUv - mouseInstancePos5));
-            if (mouseInstanceCount > 6) minWakeDist = min(minWakeDist, length(vUv - mouseInstancePos6));
-            if (mouseInstanceCount > 7) minWakeDist = min(minWakeDist, length(vUv - mouseInstancePos7));
+${wakeMinDist.join('\n')}
             if (minWakeDist < wakeRadius) {
-                if (mouseInstanceCount > 0) wakeDisplacement += addWakeContribution(mouseInstancePos0, mouseInstanceVel0, mouseInstanceAlpha0);
-                if (mouseInstanceCount > 1) wakeDisplacement += addWakeContribution(mouseInstancePos1, mouseInstanceVel1, mouseInstanceAlpha1);
-                if (mouseInstanceCount > 2) wakeDisplacement += addWakeContribution(mouseInstancePos2, mouseInstanceVel2, mouseInstanceAlpha2);
-                if (mouseInstanceCount > 3) wakeDisplacement += addWakeContribution(mouseInstancePos3, mouseInstanceVel3, mouseInstanceAlpha3);
-                if (mouseInstanceCount > 4) wakeDisplacement += addWakeContribution(mouseInstancePos4, mouseInstanceVel4, mouseInstanceAlpha4);
-                if (mouseInstanceCount > 5) wakeDisplacement += addWakeContribution(mouseInstancePos5, mouseInstanceVel5, mouseInstanceAlpha5);
-                if (mouseInstanceCount > 6) wakeDisplacement += addWakeContribution(mouseInstancePos6, mouseInstanceVel6, mouseInstanceAlpha6);
-                if (mouseInstanceCount > 7) wakeDisplacement += addWakeContribution(mouseInstancePos7, mouseInstanceVel7, mouseInstanceAlpha7);
+${wakeContrib.join('\n')}
             }
         }
 
@@ -253,28 +242,13 @@ const DEFAULT_FRAGMENT_SHADER = `
         vec2 splooshDisplacement = vec2(0.0);
         if (splooshEnabled > 0.5 && splooshInstanceCount > 0) {
             float minSplooshDist = 1.0;
-            if (splooshInstanceCount > 0) minSplooshDist = min(minSplooshDist, length(vUv - splooshPos0));
-            if (splooshInstanceCount > 1) minSplooshDist = min(minSplooshDist, length(vUv - splooshPos1));
-            if (splooshInstanceCount > 2) minSplooshDist = min(minSplooshDist, length(vUv - splooshPos2));
-            if (splooshInstanceCount > 3) minSplooshDist = min(minSplooshDist, length(vUv - splooshPos3));
-            if (splooshInstanceCount > 4) minSplooshDist = min(minSplooshDist, length(vUv - splooshPos4));
-            if (splooshInstanceCount > 5) minSplooshDist = min(minSplooshDist, length(vUv - splooshPos5));
-            if (splooshInstanceCount > 6) minSplooshDist = min(minSplooshDist, length(vUv - splooshPos6));
-            if (splooshInstanceCount > 7) minSplooshDist = min(minSplooshDist, length(vUv - splooshPos7));
+${splooshMinDist.join('\n')}
             if (minSplooshDist < splooshRadius) {
-            vec4 s0 = vec4(0.0), s1 = vec4(0.0), s2 = vec4(0.0), s3 = vec4(0.0);
-            vec4 s4 = vec4(0.0), s5 = vec4(0.0), s6 = vec4(0.0), s7 = vec4(0.0);
-            if (splooshInstanceCount > 0) s0 = splooshSourceData(splooshPos0, splooshAlpha0, splooshAge0);
-            if (splooshInstanceCount > 1) s1 = splooshSourceData(splooshPos1, splooshAlpha1, splooshAge1);
-            if (splooshInstanceCount > 2) s2 = splooshSourceData(splooshPos2, splooshAlpha2, splooshAge2);
-            if (splooshInstanceCount > 3) s3 = splooshSourceData(splooshPos3, splooshAlpha3, splooshAge3);
-            if (splooshInstanceCount > 4) s4 = splooshSourceData(splooshPos4, splooshAlpha4, splooshAge4);
-            if (splooshInstanceCount > 5) s5 = splooshSourceData(splooshPos5, splooshAlpha5, splooshAge5);
-            if (splooshInstanceCount > 6) s6 = splooshSourceData(splooshPos6, splooshAlpha6, splooshAge6);
-            if (splooshInstanceCount > 7) s7 = splooshSourceData(splooshPos7, splooshAlpha7, splooshAge7);
+${splooshSourceVars.join('\n')}
+${splooshSourceAssign.join('\n')}
 
-            vec2 rawSum = s0.xy + s1.xy + s2.xy + s3.xy + s4.xy + s5.xy + s6.xy + s7.xy;
-            float combinedEnv = max(max(max(s0.z, s1.z), max(s2.z, s3.z)), max(max(s4.z, s5.z), max(s6.z, s7.z)));
+            vec2 rawSum = ${splooshRawSum.join(' + ')};
+            float combinedEnv = ${splooshCombinedEnvExpr};
 
             if (combinedEnv > 0.001) {
                 float rawMag = length(rawSum);
@@ -312,6 +286,7 @@ const DEFAULT_FRAGMENT_SHADER = `
         gl_FragColor = vec4(tintedColor, maskStrength);
     }
 `;
+}
 
 const STENCIL_PREPASS_FRAGMENT = `
     uniform sampler2D maskMap;
@@ -327,9 +302,9 @@ class WaterRippleEffect extends BaseEffect {
         super(scene, camera, renderer, parallaxInstance);
         this.effectType = 'area';
         
-        // Wake instanced system
+        // Wake instanced system (maxInstances set from config in init)
         this.rippleInstances = [];
-        this.maxInstances = 8;
+        this.maxInstances = DEFAULT_MAX_WAKE_INSTANCES;
         this.currentInstanceIndex = -1;
         this.fadeInSpeed = 0.002;
         this.fadeOutSpeed = 0.002;
@@ -353,9 +328,9 @@ class WaterRippleEffect extends BaseEffect {
         this.trailSpacing = 0.03;
         this.lastBreadcrumbPos = new THREE.Vector2(-1, -1);
         
-        // Sploosh (click/tap splash) system
+        // Sploosh (click/tap splash) system (maxSplooshInstances set from config in init)
         this.splooshInstances = [];
-        this.maxSplooshInstances = 8;
+        this.maxSplooshInstances = DEFAULT_MAX_SPLOOSH_INSTANCES;
         this.splooshDuration = 3.0;
         
         // Particle emitter (instantiated in init after scene is ready)
@@ -381,13 +356,13 @@ class WaterRippleEffect extends BaseEffect {
         this._cachedRectFrame = -1;
         this._frameCounter = 0;
 
-        // Static uniform name arrays (avoid recreating every frame)
-        this._wakePosList = ['mouseInstancePos0','mouseInstancePos1','mouseInstancePos2','mouseInstancePos3','mouseInstancePos4','mouseInstancePos5','mouseInstancePos6','mouseInstancePos7'];
-        this._wakeVelList = ['mouseInstanceVel0','mouseInstanceVel1','mouseInstanceVel2','mouseInstanceVel3','mouseInstanceVel4','mouseInstanceVel5','mouseInstanceVel6','mouseInstanceVel7'];
-        this._wakeAlphaList = ['mouseInstanceAlpha0','mouseInstanceAlpha1','mouseInstanceAlpha2','mouseInstanceAlpha3','mouseInstanceAlpha4','mouseInstanceAlpha5','mouseInstanceAlpha6','mouseInstanceAlpha7'];
-        this._splooshPosList = ['splooshPos0','splooshPos1','splooshPos2','splooshPos3','splooshPos4','splooshPos5','splooshPos6','splooshPos7'];
-        this._splooshAlphaList = ['splooshAlpha0','splooshAlpha1','splooshAlpha2','splooshAlpha3','splooshAlpha4','splooshAlpha5','splooshAlpha6','splooshAlpha7'];
-        this._splooshAgeList = ['splooshAge0','splooshAge1','splooshAge2','splooshAge3','splooshAge4','splooshAge5','splooshAge6','splooshAge7'];
+        // Uniform name arrays (built in init from config max counts)
+        this._wakePosList = [];
+        this._wakeVelList = [];
+        this._wakeAlphaList = [];
+        this._splooshPosList = [];
+        this._splooshAlphaList = [];
+        this._splooshAgeList = [];
 
         this.setupMouseTracking();
     }
@@ -490,6 +465,16 @@ class WaterRippleEffect extends BaseEffect {
             const rippleScale = config.rippleScale ?? 3.0;
             const rippleSpeed = config.rippleSpeed ?? 0.05;
             const refractionStrength = config.refractionStrength ?? 0.02;
+
+            // Instance limits (configurable; higher = more simultaneous wake/sploosh without eviction)
+            this.maxInstances = config.maxWakeInstances ?? config.mouseInteraction?.maxWakeInstances ?? DEFAULT_MAX_WAKE_INSTANCES;
+            this.maxSplooshInstances = config.maxSplooshInstances ?? config.splooshInteraction?.maxSplooshInstances ?? DEFAULT_MAX_SPLOOSH_INSTANCES;
+            this._wakePosList = Array.from({ length: this.maxInstances }, (_, i) => `mouseInstancePos${i}`);
+            this._wakeVelList = Array.from({ length: this.maxInstances }, (_, i) => `mouseInstanceVel${i}`);
+            this._wakeAlphaList = Array.from({ length: this.maxInstances }, (_, i) => `mouseInstanceAlpha${i}`);
+            this._splooshPosList = Array.from({ length: this.maxSplooshInstances }, (_, i) => `splooshPos${i}`);
+            this._splooshAlphaList = Array.from({ length: this.maxSplooshInstances }, (_, i) => `splooshAlpha${i}`);
+            this._splooshAgeList = Array.from({ length: this.maxSplooshInstances }, (_, i) => `splooshAge${i}`);
             
             // Wake interaction config
             const mouseConfig = config.mouseInteraction || {};
@@ -527,32 +512,15 @@ class WaterRippleEffect extends BaseEffect {
                 wakeFrequency: { value: mouseConfig.wakeFrequency ?? 25.0 },
                 wakeRippleSpeed: { value: mouseConfig.wakeRippleSpeed ?? 2.0 },
                 wakeTint: { value: mouseConfig.wakeTint ?? 3.0 },
-                // Per-slot instance uniforms
+                // Per-slot instance uniforms (dynamically generated)
                 mouseInstanceCount: { value: 0 },
-                mouseInstancePos0: { value: new THREE.Vector2(-1, -1) },
-                mouseInstancePos1: { value: new THREE.Vector2(-1, -1) },
-                mouseInstancePos2: { value: new THREE.Vector2(-1, -1) },
-                mouseInstancePos3: { value: new THREE.Vector2(-1, -1) },
-                mouseInstancePos4: { value: new THREE.Vector2(-1, -1) },
-                mouseInstancePos5: { value: new THREE.Vector2(-1, -1) },
-                mouseInstancePos6: { value: new THREE.Vector2(-1, -1) },
-                mouseInstancePos7: { value: new THREE.Vector2(-1, -1) },
-                mouseInstanceVel0: { value: new THREE.Vector2(0, 0) },
-                mouseInstanceVel1: { value: new THREE.Vector2(0, 0) },
-                mouseInstanceVel2: { value: new THREE.Vector2(0, 0) },
-                mouseInstanceVel3: { value: new THREE.Vector2(0, 0) },
-                mouseInstanceVel4: { value: new THREE.Vector2(0, 0) },
-                mouseInstanceVel5: { value: new THREE.Vector2(0, 0) },
-                mouseInstanceVel6: { value: new THREE.Vector2(0, 0) },
-                mouseInstanceVel7: { value: new THREE.Vector2(0, 0) },
-                mouseInstanceAlpha0: { value: 0 },
-                mouseInstanceAlpha1: { value: 0 },
-                mouseInstanceAlpha2: { value: 0 },
-                mouseInstanceAlpha3: { value: 0 },
-                mouseInstanceAlpha4: { value: 0 },
-                mouseInstanceAlpha5: { value: 0 },
-                mouseInstanceAlpha6: { value: 0 },
-                mouseInstanceAlpha7: { value: 0 },
+                ...Object.fromEntries(
+                    this._wakePosList.flatMap((name, i) => [
+                        [name, { value: new THREE.Vector2(-1, -1) }],
+                        [this._wakeVelList[i], { value: new THREE.Vector2(0, 0) }],
+                        [this._wakeAlphaList[i], { value: 0 }]
+                    ])
+                ),
                 // Sploosh uniforms
                 splooshEnabled: { value: splooshEnabled ? 1.0 : 0.0 },
                 splooshStrength: { value: splooshConfig.strength ?? 1.5 },
@@ -561,34 +529,17 @@ class WaterRippleEffect extends BaseEffect {
                 splooshSpeed: { value: splooshConfig.speed ?? 0.08 },
                 splooshTint: { value: splooshConfig.tint ?? 1.0 },
                 splooshInstanceCount: { value: 0 },
-                splooshPos0: { value: new THREE.Vector2(-1, -1) },
-                splooshPos1: { value: new THREE.Vector2(-1, -1) },
-                splooshPos2: { value: new THREE.Vector2(-1, -1) },
-                splooshPos3: { value: new THREE.Vector2(-1, -1) },
-                splooshPos4: { value: new THREE.Vector2(-1, -1) },
-                splooshPos5: { value: new THREE.Vector2(-1, -1) },
-                splooshPos6: { value: new THREE.Vector2(-1, -1) },
-                splooshPos7: { value: new THREE.Vector2(-1, -1) },
-                splooshAlpha0: { value: 0 },
-                splooshAlpha1: { value: 0 },
-                splooshAlpha2: { value: 0 },
-                splooshAlpha3: { value: 0 },
-                splooshAlpha4: { value: 0 },
-                splooshAlpha5: { value: 0 },
-                splooshAlpha6: { value: 0 },
-                splooshAlpha7: { value: 0 },
-                splooshAge0: { value: 0 },
-                splooshAge1: { value: 0 },
-                splooshAge2: { value: 0 },
-                splooshAge3: { value: 0 },
-                splooshAge4: { value: 0 },
-                splooshAge5: { value: 0 },
-                splooshAge6: { value: 0 },
-                splooshAge7: { value: 0 }
+                ...Object.fromEntries(
+                    this._splooshPosList.flatMap((name, i) => [
+                        [name, { value: new THREE.Vector2(-1, -1) }],
+                        [this._splooshAlphaList[i], { value: 0 }],
+                        [this._splooshAgeList[i], { value: 0 }]
+                    ])
+                )
             };
 
             this.overlayMesh = this.createCoarseAreaEffectMesh(
-                DEFAULT_FRAGMENT_SHADER,
+                buildFragmentShader(this.maxInstances, this.maxSplooshInstances),
                 effectUniforms,
                 { overlaySegments: config.overlaySegments ?? 64, depthWrite: false }
             );

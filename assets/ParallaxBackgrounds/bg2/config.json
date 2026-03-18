@@ -62,7 +62,6 @@
         "blendMode": "AdditiveBlending",
         "depthWrite": false,
         "alphaTest": 0.01,
-        "useGSAP": false,
         "enableRotation": false
       },
       "lanterns": [
@@ -393,6 +392,8 @@
       ]
     },
     "waterRipple": {
+      "maxWakeInstances": 16,
+      "maxSplooshInstances": 16,
       "maskPath": "assets/bg2WaterMask.webp",
       "maskPattern": "bg2WaterBW*.webp",
       "ripplePath": "assets/waterripplenormal.webp",
@@ -403,8 +404,8 @@
       "mouseInteraction": {
         "enabled": true,
         "wakeStrength": 15.0,
-        "wakeRadius": 0.15,
-        "wakeAngle": 0.35,
+        "wakeRadius": 0.1,
+        "wakeAngle": 0.5,
         "wakeLength": 1,
         "wakeFrequency": 25.0,
         "wakeRippleSpeed": 2.5,
@@ -483,7 +484,7 @@
         "maxInputVelocity": 1.0,
         "reversalDotThreshold": 0.45,
         "reversalThreshold": 2,
-        "intensityGain": 0.5,
+        "intensityGain": 0.7,
         "intensityDecay": 0.05,
         "maxIntensity": 0.7,
         "decayRate": 3.0,

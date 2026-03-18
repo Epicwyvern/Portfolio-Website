@@ -103,57 +103,12 @@ float rays = 1.0 - smoothstep(0.2, 0.5, distance);
 float alpha = core + rays * 0.3;
 ```
 
-## GSAP Integration
-
-### Installation
-```bash
-npm install gsap
-```
-
-### Basic Usage
-```javascript
-import GSAPEffects from './js/gsap-effects.js';
-
-const gsapEffects = new GSAPEffects();
-
-// Animate particle with professional easing
-gsapEffects.animateParticleWithGSAP(particle, {
-  lifetime: 2.0,
-  finalScale: 3.0,
-  maxOpacity: 0.8,
-  enableRotation: true
-});
-```
-
-### Advanced Effects
-```javascript
-// Camera shake on particle burst
-gsapEffects.createCameraShake(camera, 0.2, 0.5);
-
-// Color transition
-gsapEffects.animateColor(
-  material,
-  { r: 1, g: 0.6, b: 0.2 }, // From orange
-  { r: 0.2, g: 0.6, b: 1 }, // To blue
-  1.5 // Duration
-);
-
-// Staggered particle appearance
-gsapEffects.staggerParticles(particles, {
-  duration: 0.8,
-  stagger: 0.1,
-  ease: "back.out(1.7)"
-});
-```
-
 ## Performance Considerations
 
 1. **Additive Blending**: Disable `depthWrite` for better performance
 2. **Particle Count**: Limit active particles per system (3-10 recommended)
 3. **Texture Size**: Use power-of-2 textures (128x128, 256x256)
 4. **Alpha Test**: Use appropriate `alphaTest` values to avoid overdraw
-5. **GSAP**: Use sparingly for hero effects, not every particle
-
 ## Debug Controls
 
 The test effects interface now includes:
