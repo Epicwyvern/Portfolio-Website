@@ -290,7 +290,7 @@ class BaseEffect {
      */
     createScreenEffectMesh(fragmentShader, effectUniforms, options = {}) {
         log('BaseEffect: Creating screen effect overlay mesh');
-        const distanceFromCamera = options.distanceFromCamera ?? 0.5;
+        const { distanceFromCamera = 0.5, ...materialOptions } = options;
         const fov = 45;
         const fovRad = THREE.MathUtils.degToRad(fov);
         const halfFov = fovRad / 2;
@@ -319,7 +319,7 @@ class BaseEffect {
             depthTest: false,
             depthWrite: false,
             side: THREE.FrontSide,
-            ...options
+            ...materialOptions
         });
         const mesh = new THREE.Mesh(geometry, material);
         mesh.position.set(0, 0, this.camera.position.z - distanceFromCamera);

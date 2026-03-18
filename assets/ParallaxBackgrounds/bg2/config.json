@@ -402,7 +402,7 @@
       "refractionStrength": 0.01,
       "mouseInteraction": {
         "enabled": true,
-        "wakeStrength": 20.0,
+        "wakeStrength": 15.0,
         "wakeRadius": 0.15,
         "wakeAngle": 0.35,
         "wakeLength": 1,
@@ -584,7 +584,7 @@
       "glowStrengthMax": 0.5,
       "flickerSpeed": 5,
       "flickerAmount": 0.4,
-      "innerFogStrength": 1.5,
+      "innerFogStrength": 1.2,
       "innerRimStrength": 0.28,
       "innerRimThickness": 0.09,
       "fogNoiseScale": 5.5,
