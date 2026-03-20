@@ -236,6 +236,25 @@ class FoliageWindEffect extends BaseEffect {
             this._rustleIntensityList.push(`rustleIntensity${i}`);
             this._rustleAlphaList.push(`rustleAlpha${i}`);
         }
+
+        this._foliageSpawnWorldScratch = new THREE.Vector3();
+        this._foliageSpawnDispScratch = new THREE.Vector2();
+    }
+
+    /**
+     * World position on the parallax mesh at mask UV (u,v), including the same XY parallax
+     * displacement as the main mesh vertex shader (matches lanterns / point effects).
+     */
+    _worldPositionForFoliageUV(u, v) {
+        if (!this.parallax?.getWorldPositionForUV || !this.parallax?.getParallaxDisplacementForUV) {
+            return null;
+        }
+        const out = this._foliageSpawnWorldScratch;
+        this.parallax.getWorldPositionForUV(u, v, 0, out);
+        this.parallax.getParallaxDisplacementForUV(u, v, this._foliageSpawnDispScratch);
+        out.x += this._foliageSpawnDispScratch.x;
+        out.y += this._foliageSpawnDispScratch.y;
+        return out;
     }
 
     getConfig() {
@@ -360,17 +379,14 @@ class FoliageWindEffect extends BaseEffect {
     }
 
     _getRandomFoliageSpawn(maxAttempts = 32) {
-        const rect = this._getCanvasRect();
-        if (!rect || !this.maskSampler?.data) return null;
+        if (!this.maskSampler?.data) return null;
 
         for (let i = 0; i < maxAttempts; i++) {
             const u = Math.random();
             const v = Math.random();
             if (!this._isUVOverFoliage(u, v)) continue;
-            const px = u * rect.width;
-            const py = (1 - v) * rect.height;
-            const worldPos = this._getWorldPosAtPixel(px, py);
-            if (worldPos) return { worldPos, uv: new THREE.Vector2(u, v) };
+            const w = this._worldPositionForFoliageUV(u, v);
+            if (w) return { worldPos: w.clone(), uv: new THREE.Vector2(u, v) };
         }
         return null;
     }
@@ -422,6 +438,10 @@ class FoliageWindEffect extends BaseEffect {
         const ambient = leafConfig.ambientWind || {};
         if (ambient.enabled === false) return;
 
+        const spawnVerticalBias = typeof ambient.spawnVerticalBias === 'number' && Number.isFinite(ambient.spawnVerticalBias)
+            ? ambient.spawnVerticalBias
+            : 0;
+
         const localThreshold = Math.max(0, Math.min(1, ambient.minWindEnvelope ?? 0.82));
         const peakDrift = this._getAmbientPeakDriftMagnitude();
 
@@ -436,8 +456,9 @@ class FoliageWindEffect extends BaseEffect {
         let chosenWorldPos = null;
         let chosenWindDir = null;
         const attempts = Math.max(1, ambient.emitAttempts ?? 40);
-        const rect = this._getCanvasRect();
-        if (!rect) return;
+        if (!this.parallax?.getWorldPositionForUV || !this.parallax?.getParallaxDisplacementForUV) {
+            return;
+        }
 
         for (let i = 0; i < attempts; i++) {
             const u = Math.random();
@@ -449,8 +470,8 @@ class FoliageWindEffect extends BaseEffect {
             const localRatio = drift.length() / peakDrift;
             if (localRatio < localThreshold) continue;
 
-            const worldPos = this._getWorldPosAtPixel(u * rect.width, (1 - v) * rect.height);
-            if (!worldPos) continue;
+            const worldPosUv = this._worldPositionForFoliageUV(u, v);
+            if (!worldPosUv) continue;
 
             let windDir = drift.clone();
             if (windDir.lengthSq() < 1e-8) {
@@ -459,12 +480,13 @@ class FoliageWindEffect extends BaseEffect {
             }
             windDir.normalize();
 
-            chosenWorldPos = worldPos;
+            chosenWorldPos = worldPosUv.clone();
             chosenWindDir = windDir;
             break;
         }
 
         if (!chosenWorldPos || !chosenWindDir) return;
+        chosenWorldPos.y += spawnVerticalBias;
         chosenWorldPos.z += 0.02;
 
         this.particleEmitter.emitLeaves(chosenWorldPos, {

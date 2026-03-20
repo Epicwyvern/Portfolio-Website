@@ -489,10 +489,11 @@
         "ambientWind": {
           "enabled": true,
           "minWindEnvelope": 0.55,
+          "spawnVerticalBias": 2.0,
           "spawnInterval": [0.2, 0.8],
           "countMin": 1,
           "countMax": 2,
-          "emitAttempts": 4000,
+          "emitAttempts": 10,
           "ejectSpeed": 0.08,
           "windPush": 0.08,
           "windDriftZ": 0.12,
