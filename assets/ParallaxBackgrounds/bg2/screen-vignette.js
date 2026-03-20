@@ -462,7 +462,14 @@ class ScreenVignetteEffect extends BaseEffect {
             maxInnerBlend = Math.max(maxInnerBlend, innerProgress * fade);
 
             const innerFadeOut = 1 - innerProgress * 0.88;
-            const strength = (dirStrengthMin + (dirStrengthMax - dirStrengthMin) * outerProgress) * fade * innerFadeOut;
+            const bMin = cfg.directionalBrightnessMin ?? 1.0;
+            const bMax = cfg.directionalBrightnessMax ?? 1.0;
+            const brightnessRamp = bMin + (bMax - bMin) * outerProgress;
+            const strength =
+                (dirStrengthMin + (dirStrengthMax - dirStrengthMin) * outerProgress) *
+                fade *
+                innerFadeOut *
+                brightnessRamp;
             const size = dirSizeMin + (dirSizeMax - dirSizeMin) * outerProgress;
             if (strength <= 0.0001) continue;
 

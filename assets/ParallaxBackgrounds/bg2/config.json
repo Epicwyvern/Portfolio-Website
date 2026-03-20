@@ -51,7 +51,8 @@
       "longPressDurationMs": 600,
       "panSpeed": 0.6,
       "marginLeft": 0.3,
-      "marginRight": 0.35
+      "marginRight": 0.3,
+      "tiltCompensationScale": 7.0
     }
   },
   "effects": {
@@ -554,7 +555,7 @@
       "glowStrengthMax": 0.5,
       "flickerSpeed": 5,
       "flickerAmount": 0.4,
-      "innerFogStrength": 1.2,
+      "innerFogStrength": 1.5,
       "innerRimStrength": 0.28,
       "innerRimThickness": 0.09,
       "fogNoiseScale": 5.5,
@@ -566,10 +567,12 @@
         "enabled": true,
         "outerRadius": 0.15,
         "innerRadius": 0.045,
+        "directionalBrightnessMin": 1.00,
+        "directionalBrightnessMax": 1.75,
         "directionalStrengthMin": 0.01,
         "directionalStrengthMax": 0.2,
-        "directionalSizeMin": 0.18,
-        "directionalSizeMax": 0.99
+        "directionalSizeMin": 0.05,
+        "directionalSizeMax": 0.2
       }
     }
   }

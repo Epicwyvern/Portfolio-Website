@@ -59,7 +59,9 @@ class SimpleParallax {
                     longPressDurationMs: 600,
                     panSpeed: 0.4,
                     marginLeft: 0.01,
-                    marginRight: 0.01
+                    marginRight: 0.01,
+                    // Scales pan→parallax bias (orientationX space); bias tracks panOffsetX live while panning
+                    tiltCompensationScale: 1.0
                 }
             }
         };
@@ -135,6 +137,10 @@ class SimpleParallax {
         this._panLongPressTimer = null;
         this._panTouchId = null;
         this._panTouchStartX = 0;
+        /** `panOffsetX` when gyro baseline locked; bias = f(panOffsetX - ref). Null until baseline exists. */
+        this.panBiasReferencePanOffsetX = null;
+        /** Pan-derived parallax offset (orientationX space), recomputed each frame from pan vs ref. */
+        this.panParallaxBiasOrientationX = 0;
 
         this.init();
     }
@@ -182,6 +188,63 @@ class SimpleParallax {
         this.panSpeed = mp.panSpeed ?? 0.4;
         this.panMarginLeft = typeof mp.marginLeft === 'number' ? mp.marginLeft : 0.01;
         this.panMarginRight = typeof mp.marginRight === 'number' ? mp.marginRight : 0.01;
+        this.panTiltCompensationScale = typeof mp.tiltCompensationScale === 'number' && Number.isFinite(mp.tiltCompensationScale)
+            ? mp.tiltCompensationScale
+            : 1.0;
+    }
+
+    /**
+     * Horizontal pan range in mesh space (same units as panOffsetX), matching animate()/positionMeshByFocalPoint clamps.
+     */
+    getPanHorizontalSpan() {
+        if (this.meshOverflowX <= 0) return 0;
+        return Math.max(1e-6, this.meshOverflowX - this.panMarginLeft - this.panMarginRight);
+    }
+
+    /**
+     * Recompute pan parallax bias from current `panOffsetX` vs reference (set when gyro baseline locks).
+     * Runs every frame while using tilt so correction eases continuously during hold-to-pan.
+     */
+    updatePanParallaxBiasFromOffset() {
+        if (!this.isMobile || !this.useOrientation || !this.orientationBaseline) {
+            this.panParallaxBiasOrientationX = 0;
+            return;
+        }
+        if (this.panBiasReferencePanOffsetX === null || this.panBiasReferencePanOffsetX === undefined) {
+            this.panParallaxBiasOrientationX = 0;
+            return;
+        }
+        const span = this.getPanHorizontalSpan();
+        if (span <= 0) {
+            this.panParallaxBiasOrientationX = 0;
+            return;
+        }
+        this.panParallaxBiasOrientationX =
+            ((this.panOffsetX - this.panBiasReferencePanOffsetX) / span) *
+            this.panTiltCompensationScale *
+            this.orientationSensitivity;
+    }
+
+    /**
+     * After mesh layout / pan clamp changes, keep the same normalized bias (pan−ref)/span so resize/orientation flip is stable.
+     */
+    resyncPanBiasReferenceAfterLayoutChange(prevSpan, prevPan, prevRef) {
+        if (!this.orientationBaseline) {
+            this.panBiasReferencePanOffsetX = null;
+            return;
+        }
+        if (prevRef === null || prevRef === undefined || prevSpan <= 1e-6) {
+            this.panBiasReferencePanOffsetX = this.panOffsetX;
+            return;
+        }
+        const newSpan = this.getPanHorizontalSpan();
+        const newPan = this.panOffsetX;
+        if (newSpan <= 1e-6) {
+            this.panBiasReferencePanOffsetX = newPan;
+            return;
+        }
+        const panDeltaFromRef = prevPan - prevRef;
+        this.panBiasReferencePanOffsetX = newPan - panDeltaFromRef * (newSpan / prevSpan);
     }
 
     getDeviceBucket() {
@@ -555,6 +618,8 @@ class SimpleParallax {
             // Clear baseline when switching away from tilt mode
             this.orientationBaseline = null;
             this.orientationBaselineSamples = [];
+            this.panParallaxBiasOrientationX = 0;
+            this.panBiasReferencePanOffsetX = null;
         }
         
         if (wasMobile !== this.isMobile) {
@@ -610,6 +675,7 @@ class SimpleParallax {
         debugLog('Setting up device orientation listeners');
         this.orientationBaseline = null;
         this.orientationBaselineSamples = [];
+        this.panBiasReferencePanOffsetX = null;
         
         window.addEventListener('deviceorientation', (event) => {
             if (this.isLocked || !this.useOrientation) return;
@@ -658,6 +724,7 @@ class SimpleParallax {
                 gamma: avg.gamma / sampleCount
             };
             this.orientationBaselineSamples = [];
+            this.panBiasReferencePanOffsetX = this.panOffsetX;
         }
         
         // Store raw values for debugging
@@ -701,6 +768,8 @@ class SimpleParallax {
         if (this.orientationFallbackToTouch && this.isMobile) {
             debugLog('Using touch controls as fallback');
             this.useOrientation = false;
+            this.panParallaxBiasOrientationX = 0;
+            this.panBiasReferencePanOffsetX = null;
             // Touch events are already set up in setupEventListeners()
         } else {
             debugLog('No orientation or touch fallback available');
@@ -1111,6 +1180,10 @@ class SimpleParallax {
             
             // Recalculate scaling to maintain cover behavior
             if (this.mesh) {
+                const prevPanSpan = this.getPanHorizontalSpan();
+                const prevPan = this.panOffsetX;
+                const prevPanRef = this.panBiasReferencePanOffsetX;
+
                 const containerAspect = window.innerWidth / window.innerHeight;
                 const imageAspect = this.depthData.width / this.depthData.height;
                 const visibleHeight = 2 * Math.tan(THREE.MathUtils.degToRad(45/2)) * this.camera.position.z;
@@ -1130,6 +1203,7 @@ class SimpleParallax {
                 
                 // Reposition mesh based on focal point
                 this.positionMeshByFocalPoint(finalScale, visibleWidth, visibleHeight);
+                this.resyncPanBiasReferenceAfterLayoutChange(prevPanSpan, prevPan, prevPanRef);
                 
         // Update mesh transform tracking and notify effects
         this.updateMeshTransform(finalScale);
@@ -1233,10 +1307,11 @@ class SimpleParallax {
         // Handle input based on device type and available methods (gated by parallax.movement flag)
         if (!this.isLocked && this.getFlag('parallax.movement')) {
             if (this.isMobile && this.useOrientation && this.orientationSupported && this.getFlag('parallax.tiltControls')) {
+                this.updatePanParallaxBiasFromOffset();
                 // Use device orientation for mobile - apply same sensitivity system as mouse
                 const mouseSensitivityFocusFactor = this.mouseSensitivityFocusFactor.min + 
                     (this.mouseSensitivityFocusFactor.max - this.mouseSensitivityFocusFactor.min) * 2 * this.focus;
-                const orientationInputX = this.orientationX * mouseSensitivityFocusFactor * this.baseMouseSensitivity;
+                const orientationInputX = (this.orientationX + this.panParallaxBiasOrientationX) * mouseSensitivityFocusFactor * this.baseMouseSensitivity;
                 const orientationInputY = this.orientationY * mouseSensitivityFocusFactor * this.baseMouseSensitivity;
                 this.targetX += (orientationInputX - this.targetX) * this.easing;
                 this.targetY += (orientationInputY - this.targetY) * this.easing;
