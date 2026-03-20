@@ -52,7 +52,15 @@ class SimpleParallax {
                 orientationThreshold: 5,        // Minimum tilt angle to start movement (degrees)
                 orientationMaxAngle: 30,        // Maximum tilt angle for full movement (degrees) - reduced for comfort
                 orientationEnabled: true,       // Enable device orientation on mobile devices
-                orientationFallbackToTouch: true // Fallback to touch if orientation not available
+                orientationFallbackToTouch: true, // Fallback to touch if orientation not available
+                mobilePan: {                    // Hold-to-pan on mobile (long-press edge)
+                    enabled: true,
+                    edgeZone: 0.1,
+                    longPressDurationMs: 600,
+                    panSpeed: 0.4,
+                    marginLeft: 0.01,
+                    marginRight: 0.01
+                }
             }
         };
         
@@ -116,7 +124,18 @@ class SimpleParallax {
             invWidth: 1 / Math.max(1, window.innerWidth),
             invHeight: 1 / Math.max(1, window.innerHeight)
         };
-        
+
+        // Mobile hold-to-pan state
+        this.panOffsetX = 0;
+        this.baseMeshOffsetX = 0;
+        this.baseMeshOffsetY = 0;
+        this.meshOverflowX = 0;
+        this.isPanning = false;
+        this.panDirection = 0;
+        this._panLongPressTimer = null;
+        this._panTouchId = null;
+        this._panTouchStartX = 0;
+
         this.init();
     }
 
@@ -154,6 +173,15 @@ class SimpleParallax {
         this.orientationMaxAngle = s.orientationMaxAngle !== undefined ? s.orientationMaxAngle : 30;
         this.orientationEnabled = s.orientationEnabled !== false;
         this.orientationFallbackToTouch = s.orientationFallbackToTouch !== false;
+
+        // Mobile hold-to-pan (long-press edge)
+        const mp = s.mobilePan ?? {};
+        this.mobilePanEnabled = mp.enabled !== false;
+        this.panEdgeZone = mp.edgeZone ?? 0.1;
+        this.panLongPressMs = mp.longPressDurationMs ?? 600;
+        this.panSpeed = mp.panSpeed ?? 0.4;
+        this.panMarginLeft = typeof mp.marginLeft === 'number' ? mp.marginLeft : 0.01;
+        this.panMarginRight = typeof mp.marginRight === 'number' ? mp.marginRight : 0.01;
     }
 
     getDeviceBucket() {
@@ -936,7 +964,18 @@ class SimpleParallax {
         const offsetX = (0.5 - this.focalPoint.x) * overflowX;
         const offsetY = (0.5 - this.focalPoint.y) * overflowY;
 
-        this.mesh.position.set(offsetX, offsetY, 0);
+        this.baseMeshOffsetX = offsetX;
+        this.baseMeshOffsetY = offsetY;
+        this.meshOverflowX = Math.max(0, overflowX);
+
+        // Clamp pan offset to valid range; margins (mobile only) prevent black background from showing
+        const marginL = this.isMobile ? this.panMarginLeft : 0;
+        const marginR = this.isMobile ? this.panMarginRight : 0;
+        const panMin = -overflowX * 0.5 - offsetX + marginR;
+        const panMax = overflowX * 0.5 - offsetX - marginL;
+        this.panOffsetX = Math.max(panMin, Math.min(panMax, this.panOffsetX));
+
+        this.mesh.position.set(offsetX + this.panOffsetX, offsetY, 0);
     }
 
     setupEventListeners() {
@@ -979,10 +1018,66 @@ class SimpleParallax {
             }
         });
 
+        // Mobile hold-to-pan: long-press on left/right edge to auto-pan (capture phase)
+        const panTouchStart = (e) => {
+            if (!this.mobilePanEnabled || !this.isMobile || this.isLocked || !this.mesh) return;
+            if (this.meshOverflowX <= 0) return; // No horizontal overflow, nothing to pan
+            const t = e.touches?.[0];
+            if (!t) return;
+            const w = window.innerWidth;
+            const edgeW = w * this.panEdgeZone;
+            const inLeft = t.clientX < edgeW;
+            const inRight = t.clientX > w - edgeW;
+            if (!inLeft && !inRight) return;
+            this._panTouchId = t.identifier;
+            this._panTouchStartX = t.clientX;
+            this._panLongPressTimer = setTimeout(() => {
+                this._panLongPressTimer = null;
+                this.isPanning = true;
+                this.panDirection = inLeft ? 1 : -1;
+                debugLog('Pan mode activated:', this.panDirection > 0 ? 'left' : 'right');
+            }, this.panLongPressMs);
+        };
+        const panTouchMove = (e) => {
+            if (this.isPanning) {
+                e.preventDefault();
+                return;
+            }
+            if (this._panLongPressTimer == null) return;
+            const t = Array.from(e.touches || []).find(x => x.identifier === this._panTouchId);
+            if (!t) return;
+            const w = window.innerWidth;
+            const edgeW = w * this.panEdgeZone;
+            const moveThreshold = 30;
+            if (Math.abs(t.clientX - this._panTouchStartX) > moveThreshold ||
+                (t.clientX >= edgeW && t.clientX <= w - edgeW)) {
+                clearTimeout(this._panLongPressTimer);
+                this._panLongPressTimer = null;
+                this._panTouchId = null;
+            }
+        };
+        const panTouchEnd = (e) => {
+            const ourTouchEnded = Array.from(e.changedTouches || []).some(x => x.identifier === this._panTouchId);
+            const allTouchesGone = !e.touches || e.touches.length === 0;
+            if (ourTouchEnded || allTouchesGone) {
+                if (this._panLongPressTimer) {
+                    clearTimeout(this._panLongPressTimer);
+                    this._panLongPressTimer = null;
+                }
+                this._panTouchId = null;
+                this.isPanning = false;
+                this.panDirection = 0;
+            }
+        };
+        document.addEventListener('touchstart', panTouchStart, { passive: true, capture: true });
+        document.addEventListener('touchmove', panTouchMove, { passive: false, capture: true });
+        document.addEventListener('touchend', panTouchEnd, { passive: true, capture: true });
+        document.addEventListener('touchcancel', panTouchEnd, { passive: true, capture: true });
+
         // Touch support (enabled for mobile when not using orientation, or as fallback)
         document.addEventListener('touchmove', (event) => {
-            // Skip touch tracking if locked or if orientation is being used
-            if (this.isLocked || (this.useOrientation && this.orientationSupported)) return;
+            // Skip touch tracking if locked, panning, or orientation is being used
+            if (this.isLocked || this.isPanning || (this.useOrientation && this.orientationSupported)) return;
             
             this.mouseOnScreen = true;
             this.lastMouseMoveTime = Date.now();
@@ -1048,6 +1143,15 @@ class SimpleParallax {
         window.addEventListener('scroll', () => {
             this.updateInputBounds();
         }, { passive: true });
+
+        // On mobile, orientationchange fires before layout updates; defer resize until dimensions are correct
+        window.addEventListener('orientationchange', () => {
+            requestAnimationFrame(() => {
+                requestAnimationFrame(() => {
+                    window.dispatchEvent(new Event('resize'));
+                });
+            });
+        });
     }
 
     updateInputBounds() {
@@ -1109,6 +1213,22 @@ class SimpleParallax {
 
         // Update auto-movement
         this.updateAutoMovement();
+
+        // Mobile hold-to-pan: apply pan offset when panning
+        if (this.isPanning && this.mesh && this.meshOverflowX > 0) {
+            const marginL = this.isMobile ? this.panMarginLeft : 0;
+            const marginR = this.isMobile ? this.panMarginRight : 0;
+            const panMin = -this.meshOverflowX * 0.5 - this.baseMeshOffsetX + marginR;
+            const panMax = this.meshOverflowX * 0.5 - this.baseMeshOffsetX - marginL;
+            this.panOffsetX += this.panSpeed * deltaTime * this.panDirection;
+            this.panOffsetX = Math.max(panMin, Math.min(panMax, this.panOffsetX));
+            this.mesh.position.x = this.baseMeshOffsetX + this.panOffsetX;
+        }
+        // Always keep meshTransform and effect positions in sync (so point effects stay aligned)
+        if (this.mesh) {
+            this.updateMeshTransform(this.meshTransform.scale);
+            this.updateEffectPositions();
+        }
 
         // Handle input based on device type and available methods (gated by parallax.movement flag)
         if (!this.isLocked && this.getFlag('parallax.movement')) {
@@ -1177,6 +1297,100 @@ class SimpleParallax {
     }
 
     // --- Area Effects API (for overlay quads that sync with parallax mesh) ---
+
+    /**
+     * Returns world position for a point defined in mesh UV space (0-1).
+     * Uses the mesh's live transform—no manual sync needed. Positions are "baked" into the mesh.
+     * @param {number} u - U coordinate (0-1)
+     * @param {number} v - V coordinate (0-1)
+     * @param {number} [_z] - Ignored; Z comes from mesh surface depth at (u,v)
+     * @param {THREE.Vector3} [target] - Optional vector to write into (avoids allocation)
+     * @returns {THREE.Vector3} World position at mesh surface (includes correct depth)
+     */
+    getWorldPositionForUV(u, v, _z = 0, target) {
+        const out = target || new THREE.Vector3();
+        if (!this.mesh || !this.mesh.geometry) return out.set(0, 0, 0);
+        const geom = this.mesh.geometry;
+        const pos = geom.attributes.position;
+        const wSeg = Math.max(1, geom.parameters.widthSegments ?? 1);
+        const hSeg = Math.max(1, geom.parameters.heightSegments ?? 1);
+        const nu = Math.max(0, Math.min(1, u));
+        const nv = Math.max(0, Math.min(1, v));
+        const fu = nu * wSeg;
+        const fv = nv * hSeg;
+        const i0 = Math.min(wSeg - 1, Math.max(0, Math.floor(fu)));
+        const j0 = Math.min(hSeg - 1, Math.max(0, Math.floor(fv)));
+        const i1 = Math.min(wSeg, i0 + 1);
+        const j1 = Math.min(hSeg, j0 + 1);
+        const tu = Math.max(0, Math.min(1, fu - i0));
+        const tv = Math.max(0, Math.min(1, fv - j0));
+        const idx = (i, j) => j * (wSeg + 1) + i;
+        const x00 = pos.getX(idx(i0, j0)), y00 = pos.getY(idx(i0, j0)), z00 = pos.getZ(idx(i0, j0));
+        const x10 = pos.getX(idx(i1, j0)), y10 = pos.getY(idx(i1, j0)), z10 = pos.getZ(idx(i1, j0));
+        const x01 = pos.getX(idx(i0, j1)), y01 = pos.getY(idx(i0, j1)), z01 = pos.getZ(idx(i0, j1));
+        const x11 = pos.getX(idx(i1, j1)), y11 = pos.getY(idx(i1, j1)), z11 = pos.getZ(idx(i1, j1));
+        const lx = (1 - tu) * (1 - tv) * x00 + tu * (1 - tv) * x10 + (1 - tu) * tv * x01 + tu * tv * x11;
+        const ly = (1 - tu) * (1 - tv) * y00 + tu * (1 - tv) * y10 + (1 - tu) * tv * y01 + tu * tv * y11;
+        const lz = (1 - tu) * (1 - tv) * z00 + tu * (1 - tv) * z10 + (1 - tu) * tv * z01 + tu * tv * z11;
+        out.set(lx, ly, lz);
+        this.mesh.localToWorld(out);
+        return out;
+    }
+
+    /**
+     * Returns the parallax displacement (in world units) that the mesh vertex shader applies at UV (u,v).
+     * Use this to keep point effects aligned when the user moves the mouse.
+     * @param {number} u - U coordinate (0-1)
+     * @param {number} v - V coordinate (0-1)
+     * @param {THREE.Vector2} [target] - Optional vector to write into
+     * @returns {THREE.Vector2} Displacement (dx, dy) in world units
+     */
+    getParallaxDisplacementForUV(u, v, target) {
+        const out = target || new THREE.Vector2();
+        out.set(0, 0);
+        if (!this.mesh || !this.mesh.geometry || !this.uniforms) return out;
+        const geom = this.mesh.geometry;
+        const depthAttr = geom.attributes.depth;
+        if (!depthAttr) return out;
+        const wSeg = Math.max(1, geom.parameters.widthSegments ?? 1);
+        const hSeg = Math.max(1, geom.parameters.heightSegments ?? 1);
+        const nu = Math.max(0, Math.min(1, u));
+        const nv = Math.max(0, Math.min(1, v));
+        const fu = nu * wSeg;
+        const fv = nv * hSeg;
+        const i0 = Math.min(wSeg - 1, Math.max(0, Math.floor(fu)));
+        const j0 = Math.min(hSeg - 1, Math.max(0, Math.floor(fv)));
+        const i1 = Math.min(wSeg, i0 + 1);
+        const j1 = Math.min(hSeg, j0 + 1);
+        const tu = Math.max(0, Math.min(1, fu - i0));
+        const tv = Math.max(0, Math.min(1, fv - j0));
+        const idx = (i, j) => j * (wSeg + 1) + i;
+        const d00 = depthAttr.getX(idx(i0, j0));
+        const d10 = depthAttr.getX(idx(i1, j0));
+        const d01 = depthAttr.getX(idx(i0, j1));
+        const d11 = depthAttr.getX(idx(i1, j1));
+        const depth = (1 - tu) * (1 - tv) * d00 + tu * (1 - tv) * d10 + (1 - tu) * tv * d01 + tu * tv * d11;
+        const focus = this.uniforms.focus.value;
+        const meshDepth = this.uniforms.meshDepth.value;
+        const sensitivity = this.uniforms.sensitivity.value;
+        const edgeWidth = this.uniforms.edgeWidth.value;
+        const mouseDelta = this.uniforms.mouseDelta.value;
+        const actualDepth = depth * meshDepth;
+        const focusDepth = focus * meshDepth;
+        const smoothstep = (e0, e1, x) => {
+            const d = e1 - e0;
+            if (Math.abs(d) < 1e-6) return x <= e0 ? 0 : 1;
+            return Math.max(0, Math.min(1, (x - e0) / d));
+        };
+        const efX = smoothstep(0, edgeWidth, nu) * smoothstep(1, 1 - edgeWidth, nu);
+        const efY = smoothstep(0, edgeWidth, nv) * smoothstep(1, 1 - edgeWidth, nv);
+        const edgeFactor = efX * efY;
+        const rotateX = mouseDelta.x * sensitivity * (1 - focus) * (actualDepth - focusDepth) * -1 * edgeFactor;
+        const rotateY = mouseDelta.y * sensitivity * (1 - focus) * (actualDepth - focusDepth) * 1 * edgeFactor;
+        const scale = this.mesh.scale.x;
+        out.set(rotateX * scale, rotateY * scale);
+        return out;
+    }
 
     /**
      * Returns a clone of the main mesh geometry, including the depth attribute.

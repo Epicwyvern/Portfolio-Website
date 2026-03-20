@@ -44,7 +44,15 @@
     "orientationThreshold": 1,
     "orientationMaxAngle": 15,
     "orientationEnabled": true,
-    "orientationFallbackToTouch": false
+    "orientationFallbackToTouch": false,
+    "mobilePan": {
+      "enabled": true,
+      "edgeZone": 0.1,
+      "longPressDurationMs": 600,
+      "panSpeed": 0.6,
+      "marginLeft": 0.3,
+      "marginRight": 0.35
+    }
   },
   "effects": {
     "lanterns": {
@@ -58,336 +66,286 @@
         "count": 3,
         "lifetime": 2.5,
         "newParticleSpeed": 1.5,
-        "movementFactor": 1.0,
         "blendMode": "AdditiveBlending",
         "depthWrite": false,
-        "alphaTest": 0.01,
-        "enableRotation": false
+        "alphaTest": 0.01
       },
       "lanterns": [
         {
           "name": "Lan0",
-          "position": { "x": 0.503, "y": 0.562, "z": 0.445},
+          "position": { "x": 0.504, "y": 0.431},
           "scale": 1.0,
           "opacity": 0.5,
           "growthSpeed": 1.5,
           "count": 4,
           "lifetime": 2.5,
           "newParticleSpeed": 1.2,
-          "movementFactor": 0.3,
-          "blendMode": "AdditiveBlending",
-          "enableRotation": false
+          "blendMode": "AdditiveBlending"
         },
         {
           "name": "Lan1",
-          "position": { "x": 0.544, "y": 0.565, "z": 0.445},
+          "position": { "x": 0.55, "y": 0.427},
           "scale": 1.0,
           "opacity": 0.5,
           "growthSpeed": 1.5,
           "count": 4,
           "lifetime": 2.5,
           "newParticleSpeed": 1.2,
-          "movementFactor": 0.3,
-          "blendMode": "AdditiveBlending",
-          "enableRotation": false
+          "blendMode": "AdditiveBlending"
         },
         {
           "name": "Lan2",
-          "position": { "x": 0.545, "y": 0.528, "z": 0.45},
+          "position": { "x": 0.5973, "y": 0.418},
           "scale": 1.0,
           "opacity": 0.5,
           "growthSpeed": 1.5,
           "count": 4,
           "lifetime": 2.5,
           "newParticleSpeed": 1.2,
-          "movementFactor": 0.4,
-          "blendMode": "AdditiveBlending",
-          "enableRotation": false
+          "blendMode": "AdditiveBlending"
         },
         {
           "name": "Lan3",
-          "position": { "x": 0.586, "y": 0.575, "z": 0.443},
+          "position": { "x": 0.551, "y": 0.468},
           "scale": 1.0,
           "opacity": 0.4,
           "growthSpeed": 1.5,
           "count": 4,
           "lifetime": 2.5,
           "newParticleSpeed": 1.2,
-          "movementFactor": 0.3,
-          "blendMode": "AdditiveBlending",
-          "enableRotation": false
+          "blendMode": "AdditiveBlending"
         },
         {
           "name": "Lan4",
-          "position": { "x": 0.515, "y": 0.598, "z": 0.442},
+          "position": { "x": 0.4885, "y": 0.365},
           "scale": 1.0,
           "opacity": 0.5,
           "growthSpeed": 1.5,
           "count": 4,
           "lifetime": 2.5,
           "newParticleSpeed": 1.2,
-          "movementFactor": 0.4,
           "blendMode": "AdditiveBlending",
-          "enableRotation": false
+          "depthTest": true,
+          "depthBias": 0.231
         }, 
         {
           "name": "Lan5",
-          "position": { "x": 0.529, "y": 0.612, "z": 0.44},
+          "position": { "x": 0.516, "y": 0.39},
           "scale": 1.0,
           "opacity": 0.5,
           "growthSpeed": 1.5,
           "count": 4,
           "lifetime": 2.5,
           "newParticleSpeed": 1.2,
-          "movementFactor": 0.4,
-          "blendMode": "AdditiveBlending",
-          "enableRotation": false
+          "blendMode": "AdditiveBlending"
         },
         {
           "name": "Lan6",
-          "position": { "x": 0.568, "y": 0.601, "z": 0.44},
+          "position": { "x": 0.5325, "y": 0.376},
           "scale": 1.0,
           "opacity": 0.5,
           "growthSpeed": 1.5,
           "count": 4,
           "lifetime": 2.5,
           "newParticleSpeed": 1.2,
-          "movementFactor": 0.4,
-          "blendMode": "AdditiveBlending",
-          "enableRotation": false
+          "blendMode": "AdditiveBlending"
         },
         {
           "name": "Lan7",
-          "position": { "x": 0.489, "y": 0.627, "z": 0.44},
+          "position": { "x": 0.4985, "y": 0.3085},
           "scale": 1.0,
           "opacity": 0.5,
           "growthSpeed": 1.5,
           "count": 4,
           "lifetime": 2.5,
           "newParticleSpeed": 1.2,
-          "movementFactor": 0.4,
-          "blendMode": "AdditiveBlending",
-          "enableRotation": false
+          "blendMode": "AdditiveBlending"
         },
         {
           "name": "Lan8",
-          "position": { "x": 0.499, "y": 0.669, "z": 0.43},
+          "position": { "x": 0.5282, "y": 0.2775},
           "scale": 1.0,
           "opacity": 0.5,
           "growthSpeed": 1.5,
           "count": 4,
           "lifetime": 2.5,
           "newParticleSpeed": 1.2,
-          "movementFactor": 0.4,
-          "blendMode": "AdditiveBlending",
-          "enableRotation": false
+          "blendMode": "AdditiveBlending"
         },
         {
           "name": "Lan9",
-          "position": { "x": 0.525, "y": 0.697, "z": 0.41},
+          "position": { "x": 0.576, "y": 0.386},
           "scale": 1.0,
           "opacity": 0.5,
           "growthSpeed": 1.5,
           "count": 4,
           "lifetime": 2.5,
           "newParticleSpeed": 1.2,
-          "movementFactor": 0.4,
-          "blendMode": "AdditiveBlending",
-          "enableRotation": false
+          "blendMode": "AdditiveBlending"
         },
         {
           "name": "Lan10",
-          "position": { "x": 0.5985, "y": 0.686, "z": 0.4},
+          "position": { "x": 0.61, "y": 0.293},
           "scale": 1.0,
           "opacity": 0.5,
           "growthSpeed": 1.5,
           "count": 4,
           "lifetime": 2.5,
           "newParticleSpeed": 1.2,
-          "movementFactor": 0.8,
-          "blendMode": "AdditiveBlending",
-          "enableRotation": false
+          "blendMode": "AdditiveBlending"
         },
         {
           "name": "Lan11",
-          "position": { "x": 0.611, "y": 0.595, "z": 0.44},
+          "position": { "x": 0.625, "y": 0.392},
           "scale": 1.0,
           "opacity": 0.5,
           "growthSpeed": 1.5,
           "count": 4,
           "lifetime": 2.5,
           "newParticleSpeed": 1.2,
-          "movementFactor": 0.6,
-          "blendMode": "AdditiveBlending",
-          "enableRotation": false
+          "blendMode": "AdditiveBlending"
         },
         {
           "name": "Lan12",
-          "position": { "x": 0.727, "y": 0.690, "z": 0.39},
+          "position": { "x": 0.751, "y": 0.289},
           "scale": 1.0,
           "opacity": 0.5,
           "growthSpeed": 1.5,
           "count": 4,
           "lifetime": 2.5,
           "newParticleSpeed": 1.2,
-          "movementFactor": 0.6,
-          "blendMode": "AdditiveBlending",
-          "enableRotation": false
+          "blendMode": "AdditiveBlending"
         },
         {
           "name": "Lan13",
-          "position": { "x": 0.706, "y": 0.641, "z": 0.410},
+          "position": { "x": 0.729, "y": 0.3415},
           "scale": 1.0,
           "opacity": 0.5,
           "growthSpeed": 1.5,
           "count": 4,
           "lifetime": 2.5,
           "newParticleSpeed": 1.2,
-          "movementFactor": 0.6,
-          "blendMode": "AdditiveBlending",
-          "enableRotation": false
+          "blendMode": "AdditiveBlending"
         },
         {
           "name": "Lan14",
-          "position": { "x": 0.675, "y": 0.652, "z": 0.410},
+          "position": { "x": 0.723, "y": 0.369},
           "scale": 1.0,
           "opacity": 0.5,
           "growthSpeed": 1.5,
           "count": 4,
           "lifetime": 2.5,
           "newParticleSpeed": 1.2,
-          "movementFactor": 0.6,
-          "blendMode": "AdditiveBlending",
-          "enableRotation": false
+          "blendMode": "AdditiveBlending"
         },
         {
           "name": "Lan15",
-          "position": { "x": 0.700, "y": 0.616, "z": 0.420},
+          "position": { "x": 0.694, "y": 0.329},
           "scale": 1.0,
           "opacity": 0.5,
           "growthSpeed": 1.5,
           "count": 4,
           "lifetime": 2.5,
           "newParticleSpeed": 1.2,
-          "movementFactor": 0.6,
-          "blendMode": "AdditiveBlending",
-          "enableRotation": false
+          "blendMode": "AdditiveBlending"
         },
         {
           "name": "Lan16",
-          "position": { "x": 0.661, "y": 0.620, "z": 0.420},
+          "position": { "x": 0.6795, "y": 0.365},
           "scale": 1.0,
           "opacity": 0.5,
           "growthSpeed": 1.5,
           "count": 4,
           "lifetime": 2.5,
           "newParticleSpeed": 1.2,
-          "movementFactor": 0.6,
-          "blendMode": "AdditiveBlending",
-          "enableRotation": false
+          "blendMode": "AdditiveBlending"
         },
         {
           "name": "Lan17",
-          "position": { "x": 0.658, "y": 0.596, "z": 0.440},
+          "position": { "x": 0.677, "y": 0.3915},
           "scale": 1.0,
           "opacity": 0.5,
           "growthSpeed": 1.5,
           "count": 4,
           "lifetime": 2.5,
           "newParticleSpeed": 1.2,
-          "movementFactor": 0.6,
-          "blendMode": "AdditiveBlending",
-          "enableRotation": false
+          "blendMode": "AdditiveBlending"
         },
         {
           "name": "Lan18",
-          "position": { "x": 0.649, "y": 0.555, "z": 0.445},
+          "position": { "x": 0.667, "y": 0.438},
           "scale": 1.0,
           "opacity": 0.5,
           "growthSpeed": 1.5,
           "count": 4,
           "lifetime": 2.5,
           "newParticleSpeed": 1.2,
-          "movementFactor": 0.4,
-          "blendMode": "AdditiveBlending",
-          "enableRotation": false
+          "blendMode": "AdditiveBlending"
         },{
           "name": "Lan19",
-          "position": { "x": 0.657, "y": 0.540, "z": 0.447},
+          "position": { "x": 0.6765, "y": 0.455},
           "scale": 1.0,
           "opacity": 0.5,
           "growthSpeed": 1.5,
           "count": 4,
           "lifetime": 2.5,
           "newParticleSpeed": 1.2,
-          "movementFactor": 0.4,
-          "blendMode": "AdditiveBlending",
-          "enableRotation": false
+          "blendMode": "AdditiveBlending"
         },
         {
           "name": "Lan20",
-          "position": { "x": 0.647, "y": 0.521, "z": 0.450},
+          "position": { "x": 0.666, "y": 0.476},
           "scale": 1.0,
           "opacity": 0.5,
           "growthSpeed": 1.5,
           "count": 4,
           "lifetime": 2.5,
           "newParticleSpeed": 1.2,
-          "movementFactor": 0.4,
-          "blendMode": "AdditiveBlending",
-          "enableRotation": false
+          "blendMode": "AdditiveBlending"
         },
         {
           "name": "Lan21",
-          "position": { "x": 0.668, "y": 0.491, "z": 0.455},
+          "position": { "x": 0.6896, "y": 0.51},
           "scale": 1.0,
           "opacity": 0.5,
           "growthSpeed": 1.5,
           "count": 4,
           "lifetime": 2.5,
           "newParticleSpeed": 1.2,
-          "movementFactor": 0.2,
-          "blendMode": "AdditiveBlending",
-          "enableRotation": false
+          "blendMode": "AdditiveBlending"
         },
         {
           "name": "Lan22",
-          "position": { "x": 0.623, "y": 0.469, "z": 0.5},
+          "position": { "x": 0.641, "y": 0.535},
           "scale": 1.0,
           "opacity": 0.5,
           "growthSpeed": 1.5,
           "count": 4,
           "lifetime": 2.5,
           "newParticleSpeed": 1.2,
-          "movementFactor": 0.1,
-          "blendMode": "AdditiveBlending",
-          "enableRotation": false
+          "blendMode": "AdditiveBlending"
         },
         {
           "name": "Lan23",
-          "position": { "x": 0.646, "y": 0.452, "z": 0.51},
+          "position": { "x": 0.6673, "y": 0.555},
           "scale": 1.0,
           "opacity": 0.5,
           "growthSpeed": 1.5,
           "count": 4,
           "lifetime": 2.5,
           "newParticleSpeed": 1.2,
-          "movementFactor": 0.1,
-          "blendMode": "AdditiveBlending",
-          "enableRotation": false
+          "blendMode": "AdditiveBlending"
         }, 
         {
           "name": "Lan24",
-          "position": { "x": 0.765, "y": 0.708, "z": 0.38},
+          "position": { "x": 0.7925, "y": 0.269},
           "scale": 1.0,
           "opacity": 0.5,
           "growthSpeed": 1.5,
           "count": 4,
           "lifetime": 2.5,
           "newParticleSpeed": 1.2,
-          "movementFactor": 1,
-          "blendMode": "AdditiveBlending",
-          "enableRotation": false
+          "blendMode": "AdditiveBlending"
         }
       ]
     },
@@ -534,7 +492,7 @@
           "spawnInterval": [0.2, 0.8],
           "countMin": 1,
           "countMax": 2,
-          "emitAttempts": 40,
+          "emitAttempts": 4000,
           "ejectSpeed": 0.08,
           "windPush": 0.08,
           "windDriftZ": 0.12,

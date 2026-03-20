@@ -30,13 +30,8 @@ class LanternEffect extends BaseEffect {
             
             log(`LanternEffect: Creating ${lanternConfig.lanterns.length} lantern systems`);
             
-            // Config position is image UV (0-1). World position = (u - 0.5) * meshSize + mesh.position,
-            // so effects move with the mesh when focal point or viewport changes (no extra offset).
-            const currentTransform = this.parallax.meshTransform;
-            const currentMeshWidth = currentTransform.baseGeometrySize.width * currentTransform.scale;
-            const currentMeshHeight = currentTransform.baseGeometrySize.height * currentTransform.scale;
-            
-            // Create lantern systems (each manages multiple particles)
+            // Positions are baked into the mesh: config stores UV (0-1). World position is computed
+            // each frame via parallax.getWorldPositionForUV(mesh.localToWorld)—no manual sync.
             this.lanternSystems = [];
             lanternConfig.lanterns.forEach((lanternData, index) => {
                 try {
@@ -44,34 +39,28 @@ class LanternEffect extends BaseEffect {
                     const config = { ...lanternConfig.defaults, ...lanternData };
                     const lanternName = config.name;
                     
-                    // Config coordinates are image UV (0-1); same space as focal point
-                    const configPos = new THREE.Vector3(
+                    // Config coordinates are image UV (u,v) 0-1; Z comes from mesh surface at that UV
+                    const basePosition = new THREE.Vector3(
                         config.position.x ?? 0.5,
                         config.position.y ?? 0.5,
-                        config.position.z ?? 0.5
+                        0 // Z ignored; getWorldPositionForUV derives it from mesh geometry
                     );
                     
-                    const worldX = (configPos.x - 0.5) * currentMeshWidth + currentTransform.position.x;
-                    const worldY = (configPos.y - 0.5) * currentMeshHeight + currentTransform.position.y;
-                    const worldPos = new THREE.Vector3(worldX, worldY, configPos.z);
+                    if (index === 0) log(`LanternEffect: Sample lantern system - basePosition (UV):`, basePosition);
                     
-                    // Reduced logging for performance
-                    if (index === 0) log(`LanternEffect: Sample lantern system transform - config:`, configPos, '-> world:', worldPos);
-                    
-                    // Create lantern system
+                    // Create lantern system; originPosition filled each frame from getWorldPositionForUV
                     const lanternSystem = {
                         name: config.name,
                         index: index,
-                        originPosition: worldPos.clone(), // Current working position (changes with mesh/focal)
-                        basePosition: configPos.clone(),    // Image UV (0-1); used to recompute world when mesh transform changes
+                        originPosition: new THREE.Vector3(), // Filled each frame from mesh
+                        basePosition: basePosition,
                         config: config,
                         particles: [], // Array of active particles
                         nextParticleTime: 0, // When to spawn next particle
-                        movementFactor: config.movementFactor !== undefined ? config.movementFactor : 1.0
                     };
                     
                     this.lanternSystems.push(lanternSystem);
-                    log(`LanternEffect: Created lantern system ${index} (${config.name}) at world position:`, worldPos);
+                    log(`LanternEffect: Created lantern system ${index} (${config.name})`);
                     
                 } catch (error) {
                     console.error(`LanternEffect: Error creating lantern system ${index}:`, error);
@@ -128,6 +117,11 @@ class LanternEffect extends BaseEffect {
                     }
                     return;
                 }
+                // Bake position from mesh (UV -> world via mesh.localToWorld)
+                this.parallax?.getWorldPositionForUV(
+                    system.basePosition.x, system.basePosition.y, 0,
+                    system.originPosition
+                );
                 // Check if we need to spawn a new particle
                 if (this.time >= system.nextParticleTime && system.particles.length < system.config.count) {
                     this.spawnParticle(system);
@@ -312,9 +306,14 @@ class LanternEffect extends BaseEffect {
             // Get blend mode from config
             const blendMode = this.getBlendMode(system.config.blendMode || 'AdditiveBlending');
             const depthWrite = system.config.depthWrite !== undefined ? system.config.depthWrite : false;
+            const depthTest = system.config.depthTest !== undefined ? system.config.depthTest : false;
             const alphaTest = system.config.alphaTest || 0.01;
             
             // Create particle mesh with configurable blend mode
+            // depthTest: true = sample depth buffer so nearer mesh (e.g. foreground tree) occludes the flare
+            // depthWrite: usually false for transparent/additive so we do not overwrite scene depth incorrectly
+            // depthTest: false (default) = glow draws on top of everything
+            // Position uses exact mesh depth for perfect parallax alignment
             const particle = this.createPlaneMesh(
                 0.1, // Base size - will be scaled
                 0.1, 
@@ -325,7 +324,8 @@ class LanternEffect extends BaseEffect {
                     alphaTest: alphaTest,
                     blending: blendMode,
                     side: THREE.DoubleSide,
-                    depthWrite: depthWrite
+                    depthWrite: depthWrite,
+                    depthTest: depthTest
                 }
             );
             
@@ -393,26 +393,24 @@ class LanternEffect extends BaseEffect {
             particle.glowColor.copy(particle.colorObj).multiplyScalar(glowIntensity);
             mesh.material.color.copy(particle.glowColor);
             
-            // Apply parallax movement - sync with main mesh movement
+            // Apply parallax movement - same formula as mesh vertex shader; full displacement for perfect alignment
             let parallaxOffsetX = 0;
             let parallaxOffsetY = 0;
-            
-            // Only apply movement if movementFactor > 0
-            if (system.movementFactor > 0 && this.parallax && this.parallax.targetX !== undefined && this.parallax.targetY !== undefined) {
-                // Apply a depth-based parallax effect - closer objects (higher Z) move more
-                const parallaxDepthFactor = system.originPosition.z * 0.5; // Depth-based scaling
-                parallaxOffsetX = this.parallax.targetX * parallaxDepthFactor * system.movementFactor;
-                parallaxOffsetY = this.parallax.targetY * parallaxDepthFactor * system.movementFactor;
-                
-                // Debug logging for movement (only occasionally to avoid spam)
-                if (Math.random() < 0.001) { // Log 0.1% of the time
-                    log(`Movement debug - Factor: ${system.movementFactor}, TargetX: ${this.parallax.targetX.toFixed(3)}, OffsetX: ${parallaxOffsetX.toFixed(3)}`);
-                }
+            if (this.parallax?.getParallaxDisplacementForUV) {
+                const disp = this.parallax.getParallaxDisplacementForUV(
+                    system.basePosition.x, system.basePosition.y
+                );
+                parallaxOffsetX = disp.x;
+                parallaxOffsetY = disp.y;
             }
-            
+            // World Z: mesh surface at lantern UV. Optional depthBias (world units) moves the quad toward +Z
+            // (camera sits on +Z) so depthTest can ignore parallax-stretched edge geometry while the solid
+            // trunk still occludes. Tune per lantern when depthTest is true.
+            const db = system.config.depthBias;
+            const zBias = typeof db === 'number' && Number.isFinite(db) ? db : 0;
             mesh.position.x = system.originPosition.x + parallaxOffsetX;
             mesh.position.y = system.originPosition.y + parallaxOffsetY;
-            mesh.position.z = system.originPosition.z;
+            mesh.position.z = system.originPosition.z + zBias;
                 
             } catch (error) {
             console.error('LanternEffect: Error updating particle:', error);
@@ -460,36 +458,9 @@ class LanternEffect extends BaseEffect {
         return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2);
     }
     
-    // Update lantern positions when mesh transform changes (e.g., window resize or focal point)
-    updatePositionsForMeshTransform(meshTransform) {
-        if (!this.isInitialized || !this.lanternSystems || this.lanternSystems.length === 0) {
-            log('LanternEffect: Not ready for position updates');
-            return;
-        }
-        
-        log('LanternEffect: Updating positions for mesh transform:', meshTransform);
-        
-        const currentMeshWidth = meshTransform.baseGeometrySize.width * meshTransform.scale;
-        const currentMeshHeight = meshTransform.baseGeometrySize.height * meshTransform.scale;
-        
-        this.lanternSystems.forEach((system, index) => {
-            if (!system || !system.basePosition) {
-                console.warn(`LanternEffect: Lantern system ${index} missing required data for position update`);
-                return;
-            }
-            
-            // basePosition is image UV (0-1); same formula as mesh so effects move with focal point
-            const basePos = system.basePosition;
-            const finalX = (basePos.x - 0.5) * currentMeshWidth + meshTransform.position.x;
-            const finalY = (basePos.y - 0.5) * currentMeshHeight + meshTransform.position.y;
-            const finalZ = basePos.z;
-            
-            system.originPosition.set(finalX, finalY, finalZ);
-            
-            if (index === 0) log(`LanternEffect: Sample position update - UV: (${basePos.x.toFixed(3)}, ${basePos.y.toFixed(3)}) -> final: (${finalX.toFixed(3)}, ${finalY.toFixed(3)}, ${finalZ.toFixed(3)})`);
-        });
-        
-        log('LanternEffect: Position update complete for all lantern systems');
+    // No-op: lantern positions are baked into the mesh via getWorldPositionForUV (UV -> mesh.localToWorld)
+    updatePositionsForMeshTransform(_meshTransform) {
+        // Positions computed each frame from parallax.getWorldPositionForUV in update()
     }
     
     // Calculate what the mesh transform would be at a canonical/reference viewport size
@@ -587,11 +558,13 @@ class LanternEffect extends BaseEffect {
                 count: 3,
                 lifetime: 2.0,
                 newParticleSpeed: 1.5,
-                movementFactor: 1.0
+                blendMode: 'AdditiveBlending',
+                depthWrite: false,
+                alphaTest: 0.01
             },
             lanterns: [
-                { name: 'fallback_lantern_1', position: { x: -0.5, y: 0.0, z: 0.5 } },
-                { name: 'fallback_lantern_2', position: { x: 0.5, y: 0.0, z: 0.5 } }
+                { name: 'fallback_lantern_1', position: { x: -0.5, y: 0.0 } },
+                { name: 'fallback_lantern_2', position: { x: 0.5, y: 0.0 } }
             ]
         };
     }

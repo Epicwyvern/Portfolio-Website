@@ -414,17 +414,6 @@ class WaterRippleEffect extends BaseEffect {
             maskTexture.generateMipmaps = false;
             rippleTexture.wrapS = rippleTexture.wrapT = THREE.RepeatWrapping;
 
-            // #region agent log
-            const maskImg = maskTexture?.image;
-            const bgImg = this.parallax?.imageTexture?.image;
-            const maskW = maskImg?.width || maskImg?.naturalWidth || 0;
-            const maskH = maskImg?.height || maskImg?.naturalHeight || 0;
-            const bgW = bgImg?.width || bgImg?.naturalWidth || 0;
-            const bgH = bgImg?.height || bgImg?.naturalHeight || 0;
-            const maskFlipY = maskTexture?.flipY;
-            const bgFlipY = this.parallax?.imageTexture?.flipY;
-            // #endregion
-
             // Store textures for reuse if already loaded
             if (!this.maskTexture) this.maskTexture = maskTexture;
             if (!this.rippleTexture) this.rippleTexture = rippleTexture;
@@ -439,24 +428,6 @@ class WaterRippleEffect extends BaseEffect {
                     if (typeof requestIdleCallback !== 'undefined') {
                         requestIdleCallback(() => {
                             this.maskSampler = this.buildMaskSampler(maskTexture);
-                            // #region agent log
-                            const s = this.maskSampler;
-                            const hasData = !!(s?.data);
-                            let lowRCount = 0, lowACount = 0, highAButLowR = 0, total = 0;
-                            if (hasData && s.data) {
-                                const d = s.data, w = s.width, h = s.height;
-                                for (let y = 0; y < h; y++) {
-                                    for (let x = 0; x < w; x++) {
-                                        const i = (y * w + x) * 4;
-                                        const r = d[i] / 255, a = d[i+3] / 255;
-                                        total++;
-                                        if (r < 0.01) lowRCount++;
-                                        if (a < 0.01) lowACount++;
-                                        if (a > 0.5 && r < 0.01) highAButLowR++;
-                                    }
-                                }
-                            }
-                            // #endregion
                         }, { timeout: 500 });
                     } else {
                         setTimeout(() => { this.maskSampler = this.buildMaskSampler(maskTexture); }, 0);
@@ -575,18 +546,6 @@ class WaterRippleEffect extends BaseEffect {
             overlayMaterial.stencilFail = THREE.KeepStencilOp;
             overlayMaterial.stencilZFail = THREE.KeepStencilOp;
             overlayMaterial.stencilZPass = THREE.KeepStencilOp;
-
-            // #region agent log
-            const uvAttr = this.overlayMesh?.geometry?.attributes?.uv;
-            if (uvAttr && uvAttr.array) {
-                const arr = uvAttr.array;
-                let minU = 1, maxU = 0, minV = 1, maxV = 0;
-                for (let i = 0; i < arr.length; i += 2) {
-                    minU = Math.min(minU, arr[i]); maxU = Math.max(maxU, arr[i]);
-                    minV = Math.min(minV, arr[i+1]); maxV = Math.max(maxV, arr[i+1]);
-                }
-            }
-            // #endregion
 
             this.uniforms = effectUniforms;
 
@@ -1242,7 +1201,13 @@ class WaterRippleEffect extends BaseEffect {
         };
         
         const handleTouchMove = (event) => {
-            event.preventDefault(); // Prevent scrolling
+            // Allow pinch-to-zoom (2+ fingers) and pull-to-refresh (touch started in top zone)
+            const allowBrowserGesture =
+                event.touches.length >= 2 ||
+                (this._touchStartY != null && this._touchStartY < Math.min(150, window.innerHeight * 0.2));
+            if (!allowBrowserGesture) {
+                event.preventDefault();
+            }
             if (event.touches.length > 0) {
                 const rect = this._getCanvasRect();
                 if (!rect) return;
@@ -1252,8 +1217,11 @@ class WaterRippleEffect extends BaseEffect {
             }
         };
         
-        const handleTouchEnd = () => {
+        const handleTouchEnd = (event) => {
             this.isTouching = false;
+            if (event.touches.length === 0) {
+                this._touchStartY = null;
+            }
         };
         
         const handleClick = (event) => {
@@ -1266,6 +1234,7 @@ class WaterRippleEffect extends BaseEffect {
         
         const handleTouchStart = (event) => {
             if (event.touches.length > 0) {
+                this._touchStartY = event.touches[0].clientY;
                 const rect = this._getCanvasRect();
                 if (!rect) return;
                 const px = event.touches[0].clientX - rect.left;

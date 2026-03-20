@@ -286,6 +286,15 @@ class ScreenVignetteEffect extends BaseEffect {
         window.addEventListener('resize', resizeHandler);
         this._rtResizeHandler = resizeHandler;
 
+        // On mobile, orientationchange fires before layout updates; defer resize until dimensions are correct
+        const orientationHandler = () => {
+            requestAnimationFrame(() => {
+                requestAnimationFrame(() => this._resizeVignetteRT());
+            });
+        };
+        window.addEventListener('orientationchange', orientationHandler);
+        this._orientationHandler = orientationHandler;
+
         this.setupMouseTracking();
         this._lanternEnabledAt = {};
         this._refreshEnabledLanternConfigs();
@@ -406,17 +415,38 @@ class ScreenVignetteEffect extends BaseEffect {
         const dirSizeMax = cfg.directionalSizeMax ?? 0.92;
 
         const _proj = this._projVec ?? (this._projVec = new THREE.Vector3());
+        const wpos = this._lanternWorldScratch ?? (this._lanternWorldScratch = new THREE.Vector3());
+        const uvDisp = this._lanternDispScratch ?? (this._lanternDispScratch = new THREE.Vector2());
         const directionalGlows = [];
         let maxInnerBlend = 0;
 
+        const useMeshUV =
+            Boolean(this.parallax?.getWorldPositionForUV && this.parallax?.mesh);
+        if (useMeshUV) {
+            this.parallax.mesh.updateWorldMatrix(true, false);
+        }
+        this.camera.updateMatrixWorld(true);
+
         for (let i = 0; i < configs.length; i++) {
             const c = configs[i];
-            const wx = (c.x - 0.5) * mw + t.position.x;
-            const wy = (c.y - 0.5) * mh + t.position.y;
-            const wz = c.z ?? 0.5;
             const fade = this._getLanternFadeFactor(c?.name);
             if (fade <= 0) continue;
-            _proj.set(wx, wy, wz).project(this.camera);
+
+            if (useMeshUV) {
+                this.parallax.getWorldPositionForUV(c.x, c.y, 0, wpos);
+                if (this.parallax.getParallaxDisplacementForUV) {
+                    this.parallax.getParallaxDisplacementForUV(c.x, c.y, uvDisp);
+                    wpos.x += uvDisp.x;
+                    wpos.y += uvDisp.y;
+                }
+                _proj.copy(wpos).project(this.camera);
+            } else {
+                const wx = (c.x - 0.5) * mw + t.position.x;
+                const wy = (c.y - 0.5) * mh + t.position.y;
+                const wz = c.z ?? 0.5;
+                _proj.set(wx, wy, wz).project(this.camera);
+            }
+
             const px = (_proj.x * 0.5 + 0.5) * rect.width;
             const py = (0.5 - _proj.y * 0.5) * rect.height;
             const dx = mousePixelX - px;
@@ -621,6 +651,10 @@ class ScreenVignetteEffect extends BaseEffect {
         if (this._rtResizeHandler) {
             window.removeEventListener('resize', this._rtResizeHandler);
             this._rtResizeHandler = null;
+        }
+        if (this._orientationHandler) {
+            window.removeEventListener('orientationchange', this._orientationHandler);
+            this._orientationHandler = null;
         }
         if (this.vignetteRT) {
             this.vignetteRT.dispose();

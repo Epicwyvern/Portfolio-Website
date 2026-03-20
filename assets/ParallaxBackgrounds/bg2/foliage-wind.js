@@ -497,6 +497,7 @@ class FoliageWindEffect extends BaseEffect {
         const canvas = this.parallax.canvas;
 
         if (this._mouseMoveHandler) canvas.removeEventListener('mousemove', this._mouseMoveHandler);
+        if (this._touchStartHandler) canvas.removeEventListener('touchstart', this._touchStartHandler);
         if (this._touchMoveHandler) canvas.removeEventListener('touchmove', this._touchMoveHandler);
         if (this._touchEndHandler) {
             canvas.removeEventListener('touchend', this._touchEndHandler);
@@ -513,8 +514,20 @@ class FoliageWindEffect extends BaseEffect {
             this._isTouching = false;
         };
 
+        this._touchStartHandler = (e) => {
+            if (e.touches.length > 0) {
+                this._touchStartY = e.touches[0].clientY;
+            }
+        };
+
         this._touchMoveHandler = (e) => {
-            e.preventDefault();
+            // Allow pinch-to-zoom (2+ fingers) and pull-to-refresh (touch started in top zone)
+            const allowBrowserGesture =
+                e.touches.length >= 2 ||
+                (this._touchStartY != null && this._touchStartY < Math.min(150, window.innerHeight * 0.2));
+            if (!allowBrowserGesture) {
+                e.preventDefault();
+            }
             if (e.touches.length > 0) {
                 const rect = this._getCanvasRect();
                 if (!rect) return;
@@ -524,11 +537,17 @@ class FoliageWindEffect extends BaseEffect {
             }
         };
 
-        this._touchEndHandler = () => { this._isTouching = false; };
+        this._touchEndHandler = (e) => {
+            this._isTouching = false;
+            if (e.touches.length === 0) {
+                this._touchStartY = null;
+            }
+        };
         this._resizeHandler = () => this._invalidateRectCache();
         this._scrollHandler = () => this._invalidateRectCache();
 
         canvas.addEventListener('mousemove', this._mouseMoveHandler);
+        canvas.addEventListener('touchstart', this._touchStartHandler, { passive: true });
         canvas.addEventListener('touchmove', this._touchMoveHandler, { passive: false });
         canvas.addEventListener('touchend', this._touchEndHandler);
         canvas.addEventListener('touchcancel', this._touchEndHandler);
@@ -989,6 +1008,7 @@ class FoliageWindEffect extends BaseEffect {
         if (this.parallax?.canvas) {
             const canvas = this.parallax.canvas;
             if (this._mouseMoveHandler) canvas.removeEventListener('mousemove', this._mouseMoveHandler);
+            if (this._touchStartHandler) canvas.removeEventListener('touchstart', this._touchStartHandler);
             if (this._touchMoveHandler) canvas.removeEventListener('touchmove', this._touchMoveHandler);
             if (this._touchEndHandler) {
                 canvas.removeEventListener('touchend', this._touchEndHandler);
