@@ -4,14 +4,15 @@
 import * as THREE from 'https://unpkg.com/three@0.172.0/build/three.module.js';
 
 /**
- * Per-canvas subscription: ResizeObserver (or resize/orientation fallback) + one rAF per frame for all listeners.
+ * Per-canvas subscription: ResizeObserver + one rAF per frame for all listeners.
  * Avoids window.resize ordering races with renderer.setSize (e.g. maximize/restore).
- * @type {WeakMap<HTMLCanvasElement, { listeners: Set<() => void>, rafId: number | null, observer: ResizeObserver | null, fallbackResize: (() => void) | null, fallbackOrientation: (() => void) | null }>}
+ * @type {WeakMap<HTMLCanvasElement, { listeners: Set<() => void>, rafId: number | null, observer: ResizeObserver }>}
  */
 const rendererCanvasResizeRegistry = new WeakMap();
 
 /**
  * Run `listener` after the WebGL canvas size changes (layout / backing store). Multiple effects on the same canvas share one observer.
+ * Requires ResizeObserver (all supported browsers for this project).
  * @param {HTMLCanvasElement | null | undefined} canvas
  * @param {() => void} listener
  * @returns {() => void} Unsubscribe; disconnects the observer when the last listener is removed.
@@ -25,9 +26,7 @@ function subscribeRendererCanvasResize(canvas, listener) {
         state = {
             listeners: new Set(),
             rafId: null,
-            observer: null,
-            fallbackResize: null,
-            fallbackOrientation: null
+            observer: null
         };
         const flush = () => {
             state.rafId = null;
@@ -43,19 +42,8 @@ function subscribeRendererCanvasResize(canvas, listener) {
             if (state.rafId != null) return;
             state.rafId = requestAnimationFrame(flush);
         };
-        if (typeof ResizeObserver !== 'undefined') {
-            state.observer = new ResizeObserver(schedule);
-            state.observer.observe(canvas);
-        } else {
-            state.fallbackResize = schedule;
-            window.addEventListener('resize', state.fallbackResize);
-            state.fallbackOrientation = () => {
-                requestAnimationFrame(() => {
-                    requestAnimationFrame(schedule);
-                });
-            };
-            window.addEventListener('orientationchange', state.fallbackOrientation);
-        }
+        state.observer = new ResizeObserver(schedule);
+        state.observer.observe(canvas);
         rendererCanvasResizeRegistry.set(canvas, state);
     }
     state.listeners.add(listener);
@@ -68,18 +56,7 @@ function subscribeRendererCanvasResize(canvas, listener) {
             cancelAnimationFrame(st.rafId);
             st.rafId = null;
         }
-        if (st.observer) {
-            st.observer.disconnect();
-            st.observer = null;
-        }
-        if (st.fallbackResize) {
-            window.removeEventListener('resize', st.fallbackResize);
-            st.fallbackResize = null;
-        }
-        if (st.fallbackOrientation) {
-            window.removeEventListener('orientationchange', st.fallbackOrientation);
-            st.fallbackOrientation = null;
-        }
+        st.observer.disconnect();
         rendererCanvasResizeRegistry.delete(canvas);
     };
 }
