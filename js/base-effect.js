@@ -3,6 +3,87 @@
 
 import * as THREE from 'https://unpkg.com/three@0.172.0/build/three.module.js';
 
+/**
+ * Per-canvas subscription: ResizeObserver (or resize/orientation fallback) + one rAF per frame for all listeners.
+ * Avoids window.resize ordering races with renderer.setSize (e.g. maximize/restore).
+ * @type {WeakMap<HTMLCanvasElement, { listeners: Set<() => void>, rafId: number | null, observer: ResizeObserver | null, fallbackResize: (() => void) | null, fallbackOrientation: (() => void) | null }>}
+ */
+const rendererCanvasResizeRegistry = new WeakMap();
+
+/**
+ * Run `listener` after the WebGL canvas size changes (layout / backing store). Multiple effects on the same canvas share one observer.
+ * @param {HTMLCanvasElement | null | undefined} canvas
+ * @param {() => void} listener
+ * @returns {() => void} Unsubscribe; disconnects the observer when the last listener is removed.
+ */
+function subscribeRendererCanvasResize(canvas, listener) {
+    if (!canvas || typeof listener !== 'function') {
+        return () => {};
+    }
+    let state = rendererCanvasResizeRegistry.get(canvas);
+    if (!state) {
+        state = {
+            listeners: new Set(),
+            rafId: null,
+            observer: null,
+            fallbackResize: null,
+            fallbackOrientation: null
+        };
+        const flush = () => {
+            state.rafId = null;
+            for (const fn of state.listeners) {
+                try {
+                    fn();
+                } catch (e) {
+                    console.error('BaseEffect: canvas resize listener error', e);
+                }
+            }
+        };
+        const schedule = () => {
+            if (state.rafId != null) return;
+            state.rafId = requestAnimationFrame(flush);
+        };
+        if (typeof ResizeObserver !== 'undefined') {
+            state.observer = new ResizeObserver(schedule);
+            state.observer.observe(canvas);
+        } else {
+            state.fallbackResize = schedule;
+            window.addEventListener('resize', state.fallbackResize);
+            state.fallbackOrientation = () => {
+                requestAnimationFrame(() => {
+                    requestAnimationFrame(schedule);
+                });
+            };
+            window.addEventListener('orientationchange', state.fallbackOrientation);
+        }
+        rendererCanvasResizeRegistry.set(canvas, state);
+    }
+    state.listeners.add(listener);
+    return () => {
+        const st = rendererCanvasResizeRegistry.get(canvas);
+        if (!st) return;
+        st.listeners.delete(listener);
+        if (st.listeners.size > 0) return;
+        if (st.rafId != null) {
+            cancelAnimationFrame(st.rafId);
+            st.rafId = null;
+        }
+        if (st.observer) {
+            st.observer.disconnect();
+            st.observer = null;
+        }
+        if (st.fallbackResize) {
+            window.removeEventListener('resize', st.fallbackResize);
+            st.fallbackResize = null;
+        }
+        if (st.fallbackOrientation) {
+            window.removeEventListener('orientationchange', st.fallbackOrientation);
+            st.fallbackOrientation = null;
+        }
+        rendererCanvasResizeRegistry.delete(canvas);
+    };
+}
+
 const log = (...args) => {
     if (window.location.pathname.endsWith('test-effects.html')) {
         console.log(...args);
@@ -34,7 +115,17 @@ class BaseEffect {
         
         log('BaseEffect: Base effect initialized');
     }
-    
+
+    /**
+     * Subscribe to size changes of this effect's WebGL canvas (shared observer across all effects on the same canvas).
+     * Prefer this over `window.resize` for screen-space work that reads `renderer.domElement` dimensions.
+     * @param {() => void} callback
+     * @returns {() => void} Unsubscribe function
+     */
+    onRendererCanvasResize(callback) {
+        return subscribeRendererCanvasResize(this.renderer?.domElement, callback);
+    }
+
     isEnabled() {
         return this.enabled;
     }
@@ -285,12 +376,12 @@ class BaseEffect {
      * covers the viewport, and does not move with parallax. Use for water droplets, vignette, etc.
      * @param {string} fragmentShader - GLSL fragment shader source (receives uv, resolution)
      * @param {Object} effectUniforms - Effect-specific uniforms
-     * @param {Object} [options={}] - ShaderMaterial options + distanceFromCamera (default 0.5)
-     * @returns {THREE.Mesh} The created mesh; call updateScreenEffectViewport(mesh) on resize
+     * @param {Object} [options={}] - ShaderMaterial options + distanceFromCamera (default 0.5) + syncResolutionUniform (default true: keep uResolution in sync with domElement; set false for offscreen / scaled targets)
+     * @returns {THREE.Mesh} The created mesh; viewport updates run via shared canvas ResizeObserver
      */
     createScreenEffectMesh(fragmentShader, effectUniforms, options = {}) {
         log('BaseEffect: Creating screen effect overlay mesh');
-        const { distanceFromCamera = 0.5, ...materialOptions } = options;
+        const { distanceFromCamera = 0.5, syncResolutionUniform = true, ...materialOptions } = options;
         const fov = 45;
         const fovRad = THREE.MathUtils.degToRad(fov);
         const halfFov = fovRad / 2;
@@ -328,9 +419,9 @@ class BaseEffect {
         mesh.renderOrder = 9999;
         mesh.userData.isScreenEffect = true;
         mesh.userData.distanceFromCamera = distanceFromCamera;
-        const resizeHandler = () => this.updateScreenEffectViewport(mesh);
-        window.addEventListener('resize', resizeHandler);
-        mesh.userData.resizeCleanup = () => window.removeEventListener('resize', resizeHandler);
+        mesh.userData.syncResolutionUniform = syncResolutionUniform;
+        const boundUpdate = () => this.updateScreenEffectViewport(mesh);
+        mesh.userData.resizeCleanup = subscribeRendererCanvasResize(this.renderer.domElement, boundUpdate);
         this.meshes.push(mesh);
         this.materials.push(material);
         this.scene.add(mesh);
@@ -351,7 +442,8 @@ class BaseEffect {
         const width = height * this.camera.aspect;
         mesh.position.z = this.camera.position.z - d;
         mesh.scale.set(width, height, 1);
-        if (mesh.material.uniforms?.uResolution?.value) {
+        const syncRes = mesh.userData.syncResolutionUniform !== false;
+        if (syncRes && mesh.material.uniforms?.uResolution?.value) {
             mesh.material.uniforms.uResolution.value.set(
                 this.renderer.domElement.width,
                 this.renderer.domElement.height

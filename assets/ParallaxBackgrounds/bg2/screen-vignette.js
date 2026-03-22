@@ -243,7 +243,7 @@ class ScreenVignetteEffect extends BaseEffect {
         this.overlayMesh = this.createScreenEffectMesh(
             DEFAULT_FRAGMENT_SHADER,
             uniforms,
-            { distanceFromCamera: 0.5 }
+            { distanceFromCamera: 0.5, syncResolutionUniform: false }
         );
         this.scene.remove(this.overlayMesh);
         this.vignetteScene = new THREE.Scene();
@@ -282,18 +282,12 @@ class ScreenVignetteEffect extends BaseEffect {
         this.meshes.push(this.compositeMesh);
         this.materials.push(compositeMaterial);
 
-        const resizeHandler = () => this._resizeVignetteRT();
-        window.addEventListener('resize', resizeHandler);
-        this._rtResizeHandler = resizeHandler;
-
-        // On mobile, orientationchange fires before layout updates; defer resize until dimensions are correct
-        const orientationHandler = () => {
-            requestAnimationFrame(() => {
-                requestAnimationFrame(() => this._resizeVignetteRT());
-            });
-        };
-        window.addEventListener('orientationchange', orientationHandler);
-        this._orientationHandler = orientationHandler;
+        // RT + uResolution (half-res): same shared canvas ResizeObserver as createScreenEffectMesh (see BaseEffect).
+        this._unsubVignetteCanvasResize = this.onRendererCanvasResize(() => {
+            this._invalidateRectCache();
+            this._resizeVignetteRT();
+        });
+        this._resizeVignetteRT();
 
         this.setupMouseTracking();
         this._lanternEnabledAt = {};
@@ -655,13 +649,9 @@ class ScreenVignetteEffect extends BaseEffect {
             window.removeEventListener('scroll', this._scrollHandler);
             this._scrollHandler = null;
         }
-        if (this._rtResizeHandler) {
-            window.removeEventListener('resize', this._rtResizeHandler);
-            this._rtResizeHandler = null;
-        }
-        if (this._orientationHandler) {
-            window.removeEventListener('orientationchange', this._orientationHandler);
-            this._orientationHandler = null;
+        if (typeof this._unsubVignetteCanvasResize === 'function') {
+            this._unsubVignetteCanvasResize();
+            this._unsubVignetteCanvasResize = null;
         }
         if (this.vignetteRT) {
             this.vignetteRT.dispose();
