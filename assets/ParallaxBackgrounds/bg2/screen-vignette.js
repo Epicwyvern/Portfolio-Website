@@ -5,6 +5,7 @@
 
 import BaseEffect from '../../../js/base-effect.js';
 import * as THREE from 'https://unpkg.com/three@0.172.0/build/three.module.js';
+import { projectFlameAnchorToCanvasPixels } from './candle-flame-screen.js';
 
 const MAX_DIRECTIONAL_GLOWS = 8;
 const COMPOSITE_FRAGMENT_SHADER = `
@@ -50,6 +51,7 @@ const DEFAULT_FRAGMENT_SHADER = `
     uniform float uFogDriftSpeed;
     uniform float uFogDriftX;
     uniform float uFogDriftY;
+    uniform float uCandleVignetteMul;
 
     varying vec2 vUv;
 
@@ -177,7 +179,8 @@ const DEFAULT_FRAGMENT_SHADER = `
             fullEdgeGlow *= mix(1.0, flicker, clamp(uInnerBlend, 0.0, 1.0));
         }
 
-        float baseVignetteAlpha = edge * uVignetteStrength * (1.0 - uInnerBlend * 0.9);
+        float baseVignetteAlpha =
+            edge * uVignetteStrength * (1.0 - uInnerBlend * 0.9) * clamp(uCandleVignetteMul, 0.0, 1.0);
         float glowAlpha = directionalGlow + fullEdgeGlow;
         float totalAlpha = clamp(baseVignetteAlpha + glowAlpha, 0.0, 1.0);
 
@@ -200,6 +203,7 @@ class ScreenVignetteEffect extends BaseEffect {
         this.mousePixelX = -1;
         this.mousePixelY = -1;
         this.innerBlend = 0;
+        this.candleVignetteMul = 1;
         this._directionalGlowData = Array.from(
             { length: MAX_DIRECTIONAL_GLOWS },
             () => new THREE.Vector4(0, 0, 0, 0)
@@ -238,7 +242,8 @@ class ScreenVignetteEffect extends BaseEffect {
             uFogWarpAmount: { value: this.fogWarpAmount },
             uFogDriftSpeed: { value: this.fogDriftSpeed },
             uFogDriftX: { value: this.fogDriftX },
-            uFogDriftY: { value: this.fogDriftY }
+            uFogDriftY: { value: this.fogDriftY },
+            uCandleVignetteMul: { value: 1 }
         };
         this.overlayMesh = this.createScreenEffectMesh(
             DEFAULT_FRAGMENT_SHADER,
@@ -373,6 +378,93 @@ class ScreenVignetteEffect extends BaseEffect {
         this._cachedRect = canvas.getBoundingClientRect();
         this._cachedRectFrame = this._frameCounter;
         return this._cachedRect;
+    }
+
+    _getCandleFlameScreenConfig() {
+        return this.parallax?.config?.effects?.candleFlameScreen ?? {};
+    }
+
+    _getCandleFlameUV() {
+        const cfg = this._getCandleFlameScreenConfig();
+        const src = cfg.flamePositionSource ?? 'flameGlow';
+        if (src === 'maskCentroid') {
+            const anchor = this.parallax?._candleFlameAnchorUv;
+            if (anchor) {
+                return { x: anchor.x, y: anchor.y, z: cfg.flameZ ?? 0 };
+            }
+            const fg = this.parallax?.config?.effects?.flameGlow?.position;
+            return {
+                x: fg?.x ?? 0.098,
+                y: fg?.y ?? 0.84,
+                z: fg?.z ?? cfg.flameZ ?? 0
+            };
+        }
+        if (src === 'flameGlow') {
+            const fg = this.parallax?.config?.effects?.flameGlow?.position;
+            return {
+                x: fg?.x ?? 0.098,
+                y: fg?.y ?? 0.84,
+                z: fg?.z ?? cfg.flameZ ?? 0
+            };
+        }
+        return {
+            x: cfg.flamePosition?.x ?? 0.5,
+            y: cfg.flamePosition?.y ?? 0.5,
+            z: cfg.flamePosition?.z ?? cfg.flameZ ?? 0
+        };
+    }
+
+    /**
+     * 0 = vignette dark fully suppressed (at/inside inner radius). 1 = full dark vignette (at/ beyond outer).
+     * Smooth ramp between candle innerRadius and vignetteFade.outerRadius (same projection as candle flame).
+     */
+    computeCandleVignetteTarget(mousePixelX, mousePixelY) {
+        const candleCfg = this._getCandleFlameScreenConfig();
+        const vf = candleCfg.vignetteFade ?? {};
+        if (vf.enabled === false || candleCfg.enabled === false) return 1;
+
+        const rect = this._getCanvasRect();
+        if (!rect || !this.camera) return 1;
+        const t = this.parallax?.meshTransform;
+        if (!t) return 1;
+
+        const minDim = Math.min(rect.width, rect.height);
+        const innerPx =
+            candleCfg.innerRadiusPixels != null
+                ? candleCfg.innerRadiusPixels
+                : (candleCfg.innerRadius ?? 0.045) * minDim;
+        const innerR = Math.max(1, innerPx);
+        const outerPx =
+            vf.outerRadiusPixels != null
+                ? vf.outerRadiusPixels
+                : (vf.outerRadius ?? 0.15) * minDim;
+        let outerR = Math.max(2, outerPx);
+        if (outerR <= innerR) outerR = innerR + Math.max(2, minDim * 0.02);
+
+        const flame = this._getCandleFlameUV();
+        const _proj = this._projVec ?? (this._projVec = new THREE.Vector3());
+        const wpos = this._candleFlameWorld ?? (this._candleFlameWorld = new THREE.Vector3());
+        const uvDisp = this._candleFlameDisp ?? (this._candleFlameDisp = new THREE.Vector2());
+        const screen = projectFlameAnchorToCanvasPixels(
+            this.parallax,
+            this.camera,
+            flame,
+            candleCfg,
+            rect,
+            _proj,
+            wpos,
+            uvDisp
+        );
+        if (!screen) return 1;
+        const { px, py } = screen;
+        const dx = mousePixelX - px;
+        const dy = mousePixelY - py;
+        const d = Math.sqrt(dx * dx + dy * dy);
+
+        if (d >= outerR) return 1;
+        if (d <= innerR) return 0;
+        const tLin = (d - innerR) / (outerR - innerR);
+        return this._smoothstep01(tLin);
     }
 
     /**
@@ -588,6 +680,13 @@ class ScreenVignetteEffect extends BaseEffect {
                 py = rect.height * 0.5;
             }
         }
+        const candleCfg = this._getCandleFlameScreenConfig();
+        const vf = candleCfg.vignetteFade ?? {};
+        const candleFadeSpeed = vf.fadeSpeed ?? candleCfg.blendSpeed ?? 0.1;
+        const candleVigTarget = this.computeCandleVignetteTarget(px, py);
+        this.candleVignetteMul += (candleVigTarget - this.candleVignetteMul) * candleFadeSpeed;
+        if (u.uCandleVignetteMul) u.uCandleVignetteMul.value = this.candleVignetteMul;
+
         const glowState = this.computeGlowState(px, py);
         this.innerBlend += (glowState.innerBlendTarget - this.innerBlend) * 0.10;
         u.uInnerBlend.value = this.innerBlend;

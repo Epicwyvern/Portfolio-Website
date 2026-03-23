@@ -54,6 +54,9 @@
         },
         "screen-vignette": {
             "enabled": true
+        },
+        "candle-flame-screen": {
+            "enabled": true
         }
     }
 }
