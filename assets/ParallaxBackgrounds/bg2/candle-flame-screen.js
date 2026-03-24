@@ -1,6 +1,5 @@
-// Candle flame screen — inner-radius only; warm U-shaped fire border on candle hover.
+// Candle flame screen — UV quad pointer proximity; warm U-shaped fire border on hover.
 // Renders heavy shader to a low-res RT (~90% fewer fragments), composites fullscreen (like screen-vignette).
-// Single fireSheet sample + unified edge distance fills bottom corners (xfuel no longer zeros at x=0).
 
 import BaseEffect from '../../../js/base-effect.js';
 import * as THREE from 'https://unpkg.com/three@0.172.0/build/three.module.js';
@@ -12,8 +11,8 @@ const log = (...args) => {
 };
 
 /**
- * Maps flame UV + projection mode to canvas CSS pixels (matches pointer coords from getBoundingClientRect).
- * Exported for screen-vignette candle proximity. Scratch vectors avoid per-frame allocation.
+ * Maps mesh UV + projection mode to canvas CSS pixels (matches pointer coords from getBoundingClientRect).
+ * Used for proximity quad corners. Scratch vectors avoid per-frame allocation.
  */
 export function projectFlameAnchorToCanvasPixels(parallax, camera, flame, cfg, rect, proj, wpos, uvDisp) {
     if (!parallax || !camera || !rect || !flame) return null;
@@ -56,6 +55,206 @@ export function projectFlameAnchorToCanvasPixels(parallax, camera, flame, cfg, r
     const px = (proj.x * 0.5 + 0.5) * rect.width;
     const py = (0.5 - proj.y * 0.5) * rect.height;
     return { px, py };
+}
+
+/**
+ * Maps a proximity-quad corner (UV 0–1 on the parallax texture / mesh) to canvas CSS pixels.
+ * By default uses {@link SimpleParallax#getWorldPositionForUV} so the point sits on the **mesh surface**
+ * (correct depth), then applies {@link SimpleParallax#getParallaxDisplacementForUV} so the quad follows
+ * mouse/tilt parallax like the rendered scene. Set `proximityQuad.planarProjection` to fall back to
+ * {@link projectFlameAnchorToCanvasPixels} (flat `flameProjection` plane — does not track mesh depth).
+ */
+export function projectProximityQuadCornerToCanvasPixels(parallax, camera, corner, cfg, quadCfg, rect, proj, wpos, uvDisp) {
+    if (!parallax || !camera || !rect || !corner) return null;
+    const zDef = cfg.flameZ ?? 0;
+    if (quadCfg?.planarProjection === true) {
+        return projectFlameAnchorToCanvasPixels(
+            parallax,
+            camera,
+            { x: corner.x, y: corner.y, z: corner.z != null ? corner.z : zDef },
+            cfg,
+            rect,
+            proj,
+            wpos,
+            uvDisp
+        );
+    }
+    if (parallax.getWorldPositionForUV && parallax.mesh) {
+        camera.updateMatrixWorld(true);
+        parallax.mesh.updateWorldMatrix(true, false);
+        const mode = cfg.flameProjection ?? 'meshSurface';
+        const u = corner.x;
+        let v = corner.y;
+        const flipV =
+            mode === 'meshSurfaceVFlip' ||
+            mode === 'meshSurfaceFlipY' ||
+            mode === 'texturePlaneFlipY';
+        if (flipV) v = 1 - corner.y;
+        parallax.getWorldPositionForUV(u, v, 0, wpos);
+        if (parallax.getParallaxDisplacementForUV) {
+            parallax.getParallaxDisplacementForUV(u, v, uvDisp);
+            wpos.x += uvDisp.x;
+            wpos.y += uvDisp.y;
+        }
+        proj.copy(wpos).project(camera);
+        const px = (proj.x * 0.5 + 0.5) * rect.width;
+        const py = (0.5 - proj.y * 0.5) * rect.height;
+        return { px, py };
+    }
+    return projectFlameAnchorToCanvasPixels(
+        parallax,
+        camera,
+        { x: corner.x, y: corner.y, z: corner.z != null ? corner.z : zDef },
+        cfg,
+        rect,
+        proj,
+        wpos,
+        uvDisp
+    );
+}
+
+function smoothstep01Proximity(x) {
+    const v = Math.max(0, Math.min(1, x));
+    return v * v * (3 - 2 * v);
+}
+
+function pointInConvexQuad(px, py, q) {
+    let sign = 0;
+    for (let i = 0; i < 4; i++) {
+        const a = q[i];
+        const b = q[(i + 1) % 4];
+        const cross = (b.x - a.x) * (py - a.y) - (b.y - a.y) * (px - a.x);
+        if (Math.abs(cross) > 1e-9) {
+            const s = cross > 0 ? 1 : -1;
+            if (sign === 0) sign = s;
+            else if (sign !== s) return false;
+        }
+    }
+    return sign !== 0;
+}
+
+function distPointToSegmentPx(px, py, ax, ay, bx, by) {
+    const abx = bx - ax;
+    const aby = by - ay;
+    const apx = px - ax;
+    const apy = py - ay;
+    const ab2 = abx * abx + aby * aby;
+    let t = ab2 > 1e-12 ? (apx * abx + apy * aby) / ab2 : 0;
+    t = Math.max(0, Math.min(1, t));
+    const cx = ax + t * abx;
+    const cy = ay + t * aby;
+    const dx = px - cx;
+    const dy = py - cy;
+    return Math.sqrt(dx * dx + dy * dy);
+}
+
+/** Shortest distance from point to quad edges (px space). If inside, distance to boundary is 0 for “outside” tests — use signed exterior distance instead. */
+function distanceExteriorToConvexQuad(px, py, q) {
+    const inside = pointInConvexQuad(px, py, q);
+    if (inside) return 0;
+    let minD = Infinity;
+    for (let i = 0; i < 4; i++) {
+        const a = q[i];
+        const b = q[(i + 1) % 4];
+        const d = distPointToSegmentPx(px, py, a.x, a.y, b.x, b.y);
+        if (d < minD) minD = d;
+    }
+    return minD;
+}
+
+const DEFAULT_QUAD_OUTER_BAND = 0.15;
+
+/**
+ * Quad-only proximity: inside quad → flameProximity 1; outside → falloff within outer band.
+ * vignetteTarget: 0 inside quad (when vignetteFade enabled); outside ramps to 1 over same band.
+ * Requires four valid corners; otherwise no candle proximity (flame 0, vignette full).
+ * @returns {{ flameProximity: number, vignetteTarget: number, quadCornersPx: Array<{x:number,y:number}>|null }}
+ */
+export function computeCandleProximityMetrics(parallax, camera, cfg, mousePixelX, mousePixelY, rect, scratch) {
+    const s = scratch || {};
+    const proj = s.proj ?? (s.proj = new THREE.Vector3());
+    const wpos = s.wpos ?? (s.wpos = new THREE.Vector3());
+    const uvDisp = s.uvDisp ?? (s.uvDisp = new THREE.Vector2());
+
+    if (!parallax || !camera || !rect || cfg.enabled === false) {
+        return { flameProximity: 0, vignetteTarget: 1, quadCornersPx: null };
+    }
+    if (!parallax.meshTransform) {
+        return { flameProximity: 0, vignetteTarget: 1, quadCornersPx: null };
+    }
+
+    const minDim = Math.min(rect.width, rect.height);
+    const vf = cfg.vignetteFade ?? {};
+    const outerMax = cfg.proximityOuterMax ?? 0.3;
+
+    const quadCfg = cfg.proximityQuad;
+    let quadCornersPx = null;
+    const corners = quadCfg?.corners;
+    const hasQuad = Array.isArray(corners) && corners.length === 4;
+
+    if (hasQuad) {
+        const projected = [];
+        let ok = true;
+        for (let i = 0; i < 4; i++) {
+            const p = projectProximityQuadCornerToCanvasPixels(
+                parallax,
+                camera,
+                corners[i],
+                cfg,
+                quadCfg,
+                rect,
+                proj,
+                wpos,
+                uvDisp
+            );
+            if (!p) {
+                ok = false;
+                break;
+            }
+            projected.push({ x: p.px, y: p.py });
+        }
+        if (ok) quadCornersPx = projected;
+    }
+
+    if (!quadCornersPx) {
+        return { flameProximity: 0, vignetteTarget: 1, quadCornersPx: null };
+    }
+
+    const outerBandPx =
+        quadCfg.outerBandPixels != null
+            ? quadCfg.outerBandPixels
+            : quadCfg.outerBand != null
+              ? quadCfg.outerBand * minDim
+              : DEFAULT_QUAD_OUTER_BAND * minDim;
+    const band = Math.max(2, outerBandPx);
+
+    const mx = mousePixelX;
+    const my = mousePixelY;
+    const inside = pointInConvexQuad(mx, my, quadCornersPx);
+
+    let flameProximity = 0;
+    if (inside) {
+        flameProximity = 1;
+    } else {
+        const d = distanceExteriorToConvexQuad(mx, my, quadCornersPx);
+        if (d < band) {
+            const ringRaw = (band - d) / band;
+            flameProximity = outerMax * smoothstep01Proximity(ringRaw);
+        }
+    }
+
+    let vignetteTarget = 1;
+    if (vf.enabled !== false) {
+        if (inside) {
+            vignetteTarget = 0;
+        } else {
+            const d = distanceExteriorToConvexQuad(mx, my, quadCornersPx);
+            if (d >= band) vignetteTarget = 1;
+            else vignetteTarget = smoothstep01Proximity(d / band);
+        }
+    }
+
+    return { flameProximity, vignetteTarget, quadCornersPx };
 }
 
 const COMPOSITE_FRAGMENT_SHADER = `
@@ -351,103 +550,8 @@ class CandleFlameScreenEffect extends BaseEffect {
         return this.parallax?.config?.effects?.candleFlameScreen ?? {};
     }
 
-    getFlameUV() {
-        const cfg = this.getConfig();
-        const src = cfg.flamePositionSource ?? 'flameGlow';
-        if (src === 'maskCentroid') {
-            const anchor = this.parallax?._candleFlameAnchorUv;
-            if (anchor) {
-                return { x: anchor.x, y: anchor.y, z: cfg.flameZ ?? 0 };
-            }
-            const fg = this.parallax?.config?.effects?.flameGlow?.position;
-            return {
-                x: fg?.x ?? 0.098,
-                y: fg?.y ?? 0.84,
-                z: fg?.z ?? cfg.flameZ ?? 0
-            };
-        }
-        if (src === 'flameGlow') {
-            const fg = this.parallax?.config?.effects?.flameGlow?.position;
-            return {
-                x: fg?.x ?? 0.098,
-                y: fg?.y ?? 0.84,
-                z: fg?.z ?? cfg.flameZ ?? 0
-            };
-        }
-        return {
-            x: cfg.flamePosition?.x ?? 0.5,
-            y: cfg.flamePosition?.y ?? 0.5,
-            z: cfg.flamePosition?.z ?? cfg.flameZ ?? 0
-        };
-    }
-
-    _smoothstep01(x) {
-        const v = Math.max(0, Math.min(1, x));
-        return v * v * (3 - 2 * v);
-    }
-
     _invalidateRectCache() {
         this._cachedRectFrame = -1;
-    }
-
-    async _maybeLoadMaskCentroid() {
-        const cfg = this.getConfig();
-        if ((cfg.flamePositionSource ?? 'flameGlow') !== 'maskCentroid') return;
-        const name = this.parallax?.backgroundName;
-        if (!name) return;
-        const basePath = `./assets/ParallaxBackgrounds/${name}/`;
-        const rel =
-            cfg.maskCentroidPath ??
-            this.parallax?.config?.effects?.flameMovement?.maskPath ??
-            'assets/bg2FlameMask.webp';
-        // Full-frame mask: black / transparent = no effect; white = effect. Centroid must use ONLY
-        // white pixels. Old logic used (a < 8 && lum < T) which still counted opaque black (a=255).
-        const minBright = cfg.maskCentroidMinBrightness ?? 200;
-        const minAlpha = cfg.maskCentroidMinAlpha ?? 8;
-        try {
-            const tex = await new THREE.TextureLoader().loadAsync(basePath + rel);
-            const img = tex.image;
-            tex.dispose();
-            const w = Math.max(1, img.naturalWidth || img.width);
-            const h = Math.max(1, img.naturalHeight || img.height);
-            const cvs = document.createElement('canvas');
-            cvs.width = w;
-            cvs.height = h;
-            const ctx = cvs.getContext('2d');
-            if (!ctx) return;
-            ctx.drawImage(img, 0, 0, w, h);
-            const id = ctx.getImageData(0, 0, w, h);
-            let sx = 0;
-            let sy = 0;
-            let n = 0;
-            for (let i = 0; i < id.data.length; i += 4) {
-                const r = id.data[i];
-                const g = id.data[i + 1];
-                const b = id.data[i + 2];
-                const a = id.data[i + 3];
-                if (a < minAlpha) continue;
-                const lum = Math.max(r, g, b);
-                if (lum < minBright) continue;
-                const p = i >> 2;
-                const x = p % w;
-                const y = (p / w) | 0;
-                sx += x;
-                sy += y;
-                n++;
-            }
-            if (n < 1) {
-                log('CandleFlameScreen: maskCentroid found no bright pixels, using flameGlow fallback');
-                return;
-            }
-            const cx = sx / n;
-            const cy = sy / n;
-            const u = cx / w;
-            const v = 1 - cy / h;
-            if (this.parallax) this.parallax._candleFlameAnchorUv = { x: u, y: v };
-            log('CandleFlameScreen: maskCentroid UV', u, v, 'from', n, 'samples');
-        } catch (e) {
-            console.warn('CandleFlameScreen: maskCentroid load failed', e);
-        }
     }
 
     _getCanvasRect() {
@@ -459,68 +563,77 @@ class CandleFlameScreenEffect extends BaseEffect {
         return this._cachedRect;
     }
 
+    _ensureQuadDebugOverlay() {
+        if (this._quadDebugSvg) return;
+        const canvas = this.parallax?.canvas;
+        const parent = canvas?.parentElement;
+        if (!canvas || !parent) return;
+        const pos = getComputedStyle(parent).position;
+        if (pos === 'static' || pos === '') parent.style.position = 'relative';
+        const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        svg.setAttribute('data-candle-quad-debug', '1');
+        svg.style.position = 'absolute';
+        svg.style.pointerEvents = 'none';
+        svg.style.zIndex = '10';
+        svg.style.overflow = 'visible';
+        const poly = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
+        svg.appendChild(poly);
+        parent.appendChild(svg);
+        this._quadDebugSvg = svg;
+        this._quadDebugPoly = poly;
+    }
+
+    _updateQuadDebugOverlay(quadCornersPx) {
+        const q = this.getConfig().proximityQuad ?? {};
+        const want = q.highlight === true;
+        if (!want) {
+            if (this._quadDebugSvg) this._quadDebugSvg.style.display = 'none';
+            return;
+        }
+        this._ensureQuadDebugOverlay();
+        if (!this._quadDebugSvg || !this._quadDebugPoly) return;
+        const canvas = this.parallax?.canvas;
+        if (!canvas || !quadCornersPx || quadCornersPx.length !== 4) {
+            this._quadDebugSvg.style.display = 'none';
+            return;
+        }
+        this._quadDebugSvg.style.display = 'block';
+        this._quadDebugSvg.style.left = `${canvas.offsetLeft}px`;
+        this._quadDebugSvg.style.top = `${canvas.offsetTop}px`;
+        const w = canvas.clientWidth;
+        const h = canvas.clientHeight;
+        this._quadDebugSvg.style.width = `${w}px`;
+        this._quadDebugSvg.style.height = `${h}px`;
+        this._quadDebugSvg.setAttribute('viewBox', `0 0 ${w} ${h}`);
+        this._quadDebugSvg.setAttribute('width', '100%');
+        this._quadDebugSvg.setAttribute('height', '100%');
+        const pts = quadCornersPx.map((p) => `${p.x},${p.y}`).join(' ');
+        this._quadDebugPoly.setAttribute('points', pts);
+        this._quadDebugPoly.setAttribute('fill', q.highlightFill ?? 'rgba(255, 140, 40, 0.22)');
+        this._quadDebugPoly.setAttribute('stroke', q.highlightStroke ?? 'rgba(255, 220, 120, 0.85)');
+        this._quadDebugPoly.setAttribute('stroke-width', String(q.highlightStrokeWidth ?? 2));
+    }
+
     computeInnerProximity(mousePixelX, mousePixelY) {
         const cfg = this.getConfig();
-        if (cfg.enabled === false) return 0;
-
         const rect = this._getCanvasRect();
         if (!rect || !this.camera) return 0;
-
-        const t = this.parallax?.meshTransform;
-        if (!t) return 0;
-
-        const minDim = Math.min(rect.width, rect.height);
-        const innerRadiusPixels =
-            cfg.innerRadiusPixels != null
-                ? cfg.innerRadiusPixels
-                : (cfg.innerRadius ?? 0.045) * minDim;
-        const innerRadius = Math.max(1, innerRadiusPixels);
-
-        const flame = this.getFlameUV();
-        const _proj = this._projVec ?? (this._projVec = new THREE.Vector3());
-        const wpos = this._flameWorldScratch ?? (this._flameWorldScratch = new THREE.Vector3());
-        const uvDisp = this._flameDispScratch ?? (this._flameDispScratch = new THREE.Vector2());
-        const screen = projectFlameAnchorToCanvasPixels(
+        const scratch =
+            this._proxScratch ??
+            (this._proxScratch = {
+                proj: this._projVec ?? (this._projVec = new THREE.Vector3()),
+                wpos: this._flameWorldScratch ?? (this._flameWorldScratch = new THREE.Vector3()),
+                uvDisp: this._flameDispScratch ?? (this._flameDispScratch = new THREE.Vector2())
+            });
+        return computeCandleProximityMetrics(
             this.parallax,
             this.camera,
-            flame,
             cfg,
+            mousePixelX,
+            mousePixelY,
             rect,
-            _proj,
-            wpos,
-            uvDisp
-        );
-        if (!screen) return 0;
-        const { px, py } = screen;
-        const dx = mousePixelX - px;
-        const dy = mousePixelY - py;
-        const d = Math.sqrt(dx * dx + dy * dy);
-
-        let innerDisk = 0;
-        if (d < innerRadius) {
-            const innerRaw = (innerRadius - d) / innerRadius;
-            innerDisk = this._smoothstep01(innerRaw);
-        }
-
-        const vf = cfg.vignetteFade ?? {};
-        const outerMax = cfg.proximityOuterMax ?? 0.3;
-        let outerRing = 0;
-        if (outerMax > 0.0001) {
-            const outerPx =
-                cfg.proximityOuterRadiusPixels != null
-                    ? cfg.proximityOuterRadiusPixels
-                    : vf.outerRadiusPixels != null
-                      ? vf.outerRadiusPixels
-                      : (cfg.proximityOuterRadius ?? vf.outerRadius ?? 0.15) * minDim;
-            let outerR = Math.max(2, outerPx);
-            if (outerR <= innerRadius) outerR = innerRadius + Math.max(2, minDim * 0.02);
-            if (d >= innerRadius && d <= outerR) {
-                const ringRaw = (outerR - d) / (outerR - innerRadius);
-                outerRing = outerMax * this._smoothstep01(ringRaw);
-            }
-        }
-
-        return Math.min(1, Math.max(innerDisk, outerRing));
+            scratch
+        ).flameProximity;
     }
 
     setupMouseTracking() {
@@ -614,11 +727,10 @@ class CandleFlameScreenEffect extends BaseEffect {
         this.updateScreenEffectViewport(this.compositeMesh);
     }
 
-    async init() {
+    init() {
         log('CandleFlameScreenEffect: Initializing');
         const config = this.getConfig();
         this.applyConfig(config);
-        await this._maybeLoadMaskCentroid();
 
         const uniforms = {
             uIntensity: { value: 0 },
@@ -723,7 +835,19 @@ class CandleFlameScreenEffect extends BaseEffect {
                 py = rect.height * 0.5;
             }
         }
-        const target = this.computeInnerProximity(px, py);
+        const rect = this._getCanvasRect();
+        const scratch =
+            this._proxScratch ??
+            (this._proxScratch = {
+                proj: this._projVec ?? (this._projVec = new THREE.Vector3()),
+                wpos: this._flameWorldScratch ?? (this._flameWorldScratch = new THREE.Vector3()),
+                uvDisp: this._flameDispScratch ?? (this._flameDispScratch = new THREE.Vector2())
+            });
+        const metrics = rect
+            ? computeCandleProximityMetrics(this.parallax, this.camera, this.getConfig(), px, py, rect, scratch)
+            : { flameProximity: 0, quadCornersPx: null };
+        this._updateQuadDebugOverlay(metrics.quadCornersPx);
+        const target = metrics.flameProximity;
         this.proximityBlend += (target - this.proximityBlend) * this.blendSpeed;
         this.uniforms.uIntensity.value = this.proximityBlend;
 
@@ -806,7 +930,11 @@ class CandleFlameScreenEffect extends BaseEffect {
         this.flameScene = null;
         this.flamePassMesh = null;
         this.uniforms = null;
-        if (this.parallax) delete this.parallax._candleFlameAnchorUv;
+        if (this._quadDebugSvg?.parentElement) {
+            this._quadDebugSvg.parentElement.removeChild(this._quadDebugSvg);
+        }
+        this._quadDebugSvg = null;
+        this._quadDebugPoly = null;
         super.cleanup();
     }
 }

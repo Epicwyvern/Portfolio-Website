@@ -5,7 +5,7 @@
 
 import BaseEffect from '../../../js/base-effect.js';
 import * as THREE from 'https://unpkg.com/three@0.172.0/build/three.module.js';
-import { projectFlameAnchorToCanvasPixels } from './candle-flame-screen.js';
+import { computeCandleProximityMetrics } from './candle-flame-screen.js';
 
 const MAX_DIRECTIONAL_GLOWS = 8;
 const COMPOSITE_FRAGMENT_SHADER = `
@@ -384,39 +384,9 @@ class ScreenVignetteEffect extends BaseEffect {
         return this.parallax?.config?.effects?.candleFlameScreen ?? {};
     }
 
-    _getCandleFlameUV() {
-        const cfg = this._getCandleFlameScreenConfig();
-        const src = cfg.flamePositionSource ?? 'flameGlow';
-        if (src === 'maskCentroid') {
-            const anchor = this.parallax?._candleFlameAnchorUv;
-            if (anchor) {
-                return { x: anchor.x, y: anchor.y, z: cfg.flameZ ?? 0 };
-            }
-            const fg = this.parallax?.config?.effects?.flameGlow?.position;
-            return {
-                x: fg?.x ?? 0.098,
-                y: fg?.y ?? 0.84,
-                z: fg?.z ?? cfg.flameZ ?? 0
-            };
-        }
-        if (src === 'flameGlow') {
-            const fg = this.parallax?.config?.effects?.flameGlow?.position;
-            return {
-                x: fg?.x ?? 0.098,
-                y: fg?.y ?? 0.84,
-                z: fg?.z ?? cfg.flameZ ?? 0
-            };
-        }
-        return {
-            x: cfg.flamePosition?.x ?? 0.5,
-            y: cfg.flamePosition?.y ?? 0.5,
-            z: cfg.flamePosition?.z ?? cfg.flameZ ?? 0
-        };
-    }
-
     /**
-     * 0 = vignette dark fully suppressed (at/inside inner radius). 1 = full dark vignette (at/ beyond outer).
-     * Smooth ramp between candle innerRadius and vignetteFade.outerRadius (same projection as candle flame).
+     * 0 = vignette dark fully suppressed inside candle UV quad. 1 = full dark vignette beyond quad outer band.
+     * Uses same geometry as candle flame screen (`computeCandleProximityMetrics`).
      */
     computeCandleVignetteTarget(mousePixelX, mousePixelY) {
         const candleCfg = this._getCandleFlameScreenConfig();
@@ -428,43 +398,23 @@ class ScreenVignetteEffect extends BaseEffect {
         const t = this.parallax?.meshTransform;
         if (!t) return 1;
 
-        const minDim = Math.min(rect.width, rect.height);
-        const innerPx =
-            candleCfg.innerRadiusPixels != null
-                ? candleCfg.innerRadiusPixels
-                : (candleCfg.innerRadius ?? 0.045) * minDim;
-        const innerR = Math.max(1, innerPx);
-        const outerPx =
-            vf.outerRadiusPixels != null
-                ? vf.outerRadiusPixels
-                : (vf.outerRadius ?? 0.15) * minDim;
-        let outerR = Math.max(2, outerPx);
-        if (outerR <= innerR) outerR = innerR + Math.max(2, minDim * 0.02);
-
-        const flame = this._getCandleFlameUV();
-        const _proj = this._projVec ?? (this._projVec = new THREE.Vector3());
-        const wpos = this._candleFlameWorld ?? (this._candleFlameWorld = new THREE.Vector3());
-        const uvDisp = this._candleFlameDisp ?? (this._candleFlameDisp = new THREE.Vector2());
-        const screen = projectFlameAnchorToCanvasPixels(
+        const scratch =
+            this._candleVignetteScratch ??
+            (this._candleVignetteScratch = {
+                proj: this._projVec ?? (this._projVec = new THREE.Vector3()),
+                wpos: this._candleFlameWorld ?? (this._candleFlameWorld = new THREE.Vector3()),
+                uvDisp: this._candleFlameDisp ?? (this._candleFlameDisp = new THREE.Vector2())
+            });
+        const { vignetteTarget } = computeCandleProximityMetrics(
             this.parallax,
             this.camera,
-            flame,
             candleCfg,
+            mousePixelX,
+            mousePixelY,
             rect,
-            _proj,
-            wpos,
-            uvDisp
+            scratch
         );
-        if (!screen) return 1;
-        const { px, py } = screen;
-        const dx = mousePixelX - px;
-        const dy = mousePixelY - py;
-        const d = Math.sqrt(dx * dx + dy * dy);
-
-        if (d >= outerR) return 1;
-        if (d <= innerR) return 0;
-        const tLin = (d - innerR) / (outerR - innerR);
-        return this._smoothstep01(tLin);
+        return vignetteTarget;
     }
 
     /**
