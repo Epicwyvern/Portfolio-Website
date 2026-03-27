@@ -53,6 +53,9 @@
         "flame-glow": {
             "enabled": true
         },
+        "character-mask-tint": {
+            "enabled": true
+        },
         "screen-vignette": {
             "enabled": true
         },

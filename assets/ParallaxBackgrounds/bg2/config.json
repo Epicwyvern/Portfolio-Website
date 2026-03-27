@@ -502,6 +502,18 @@
         }
       }
     },
+    "characterMaskTint": {
+      "maskPath": "assets/bg2CharacterMask.webp",
+      "maskChannel": "luminance",
+      "maskIgnoreBelow": 0,
+      "maskInvert": false,
+      "overlaySegments": 128,
+      "depthBias": 0.0,
+      "useDepthTest": false,
+      "tintColor": "0x70ffe2",
+      "tintStrength": 0.85,
+      "opacity": 0.5
+    },
     "flameMovement": {
       "maskPath": "assets/bg2FlameMask.webp",
       "overlaySegments": 64,
@@ -543,22 +555,15 @@
     "candleFlameScreen": {
       "enabled": true,
       "flameProjection": "texturePlane",
-      "proximityQuad": {
-        "highlight": false,
-        "highlightFill": "rgba(255, 140, 40, 0.22)",
-        "highlightStroke": "rgba(255, 220, 120, 0.9)",
-        "highlightStrokeWidth": 2,
-        "outerBand": 0.2,
-        "corners": [
-          { "x": 0.088, "y": 0.138},
-          { "x": 0.093, "y": 0.132},
-          { "x": 0.105, "y": 0.186},
-          { "x": 0.094, "y": 0.189}
-        ]
-      },
-      "proximityOuterMax": 0.5,
+      "flamePositionSource": "maskCentroid",
+      "maskCentroidPath": "assets/bg2FlameMask.webp",
+      "maskCentroidMinBrightness": 200,
+      "maskCentroidMinAlpha": 8,
+      "innerRadius": 0.045,
+      "proximityOuterMax": 0.3,
       "vignetteFade": {
         "enabled": true,
+        "outerRadius": 0.15,
         "fadeSpeed": 0.1
       },
       "blendSpeed": 0.1,
@@ -566,7 +571,7 @@
       "borderReach": 0.17,
       "coordScale": 0.0165,
       "timeScale": 0.52,
-      "sheenPower": 5.0,
+      "sheenPower": 5.5,
       "flameExp": 0.26,
       "stackFalloff": 0.42,
       "sootStrength": 0.32,
@@ -594,7 +599,7 @@
     },
     "screenVignette": {
       "halfResScale": 0.25,
-      "strength": 0.7,
+      "strength": 1,
       "color": "0x000000",
       "inner": 0.65,
       "outer": 1.4,
@@ -603,8 +608,8 @@
       "roundness": 0,
       "horizontal": 1.0,
       "vertical": 1.0,
-      "glowColor": "0xffe78f",
-      "glowStrengthMax": 0.6,
+      "glowColor": "0xffdd66",
+      "glowStrengthMax": 0.5,
       "flickerSpeed": 5,
       "flickerAmount": 0.4,
       "innerFogStrength": 1.5,
