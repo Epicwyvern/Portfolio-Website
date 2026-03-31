@@ -4,7 +4,7 @@
 // opaque pixels, so alpha is not the strength channel. Use maskChannel "alpha" when transparency
 // encodes soft edges; "red" for water-style single-channel in R only.
 
-import BaseEffect from '../../../js/base-effect.js';
+import BaseEffect, { PARALLAX_COARSE_OVERLAY_Z } from '../../../js/base-effect.js';
 import * as THREE from 'https://unpkg.com/three@0.172.0/build/three.module.js';
 
 const log = (...args) => {
@@ -85,8 +85,7 @@ class CharacterMaskTintEffect extends BaseEffect {
         this.tintColor = this.parseColor(c.tintColor ?? '0x88ccff');
         this.tintStrength = c.tintStrength ?? 0.85;
         this.opacity = c.opacity ?? 1.0;
-        this.depthBias = Number.isFinite(Number(c.depthBias)) ? Number(c.depthBias) : 0;
-        // false = skip depth test: same Z as bg plane avoids "zoom" from perspective; no z-fighting on letters.
+        // false = skip depth test (draw order handles stacking). Z in update() matches foliage-wind coarse overlay.
         this.useDepthTest = c.useDepthTest === true;
         this.overlaySegments = c.overlaySegments ?? 128;
         // Default luminance: many masks use black RGB = off / white = on with A=255 on all opaque pixels.
@@ -187,13 +186,7 @@ class CharacterMaskTintEffect extends BaseEffect {
 
         this.syncUniformsFromConfig(this.getConfig());
 
-        this.syncWithParallaxMesh(this.overlayMesh);
-        const t = this.parallax?.meshTransform;
-        if (t) {
-            const cfg = this.getConfig();
-            const bias = Number.isFinite(Number(cfg.depthBias)) ? Number(cfg.depthBias) : this.depthBias;
-            this.overlayMesh.position.z = t.position.z + bias;
-        }
+        this.syncWithParallaxMesh(this.overlayMesh, { overlayZ: PARALLAX_COARSE_OVERLAY_Z });
 
         const mat = this.overlayMesh.material;
         if (mat) {

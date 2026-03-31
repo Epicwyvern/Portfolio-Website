@@ -2,7 +2,7 @@
 // Uses grayscale mask for per-pixel wind influence, wind envelope for natural blow/calm cycles,
 // and back-and-forth mouse/touch tracking for interactive rustling with falling leaves.
 
-import BaseEffect from '../../../js/base-effect.js';
+import BaseEffect, { PARALLAX_COARSE_OVERLAY_Z } from '../../../js/base-effect.js';
 import FoliageParticleEmitter from './foliage-particle-emitter.js';
 import * as THREE from 'https://unpkg.com/three@0.172.0/build/three.module.js';
 
@@ -955,7 +955,10 @@ class FoliageWindEffect extends BaseEffect {
                     depthWrite: false
                 }
             );
-            this.overlayMesh.position.z = 0.012;
+            // After character-mask-tint (renderOrder 1): tint uses depthTest false and samples undistorted UVs,
+            // so if it draws last it replaces wind with a static map in masked regions and looks misaligned at edges.
+            this.overlayMesh.renderOrder = 2;
+            this.syncWithParallaxMesh(this.overlayMesh, { overlayZ: PARALLAX_COARSE_OVERLAY_Z });
 
             // Particle emitter for falling leaves
             const leafConfig = config.leafParticles || {};
@@ -1021,8 +1024,7 @@ class FoliageWindEffect extends BaseEffect {
         }
         this._updateAmbientLeafFall(dt, config);
 
-        this.syncWithParallaxMesh(this.overlayMesh);
-        this.overlayMesh.position.z = 0.012;
+        this.syncWithParallaxMesh(this.overlayMesh, { overlayZ: PARALLAX_COARSE_OVERLAY_Z });
     }
 
     cleanup() {

@@ -508,11 +508,10 @@
       "maskIgnoreBelow": 0,
       "maskInvert": false,
       "overlaySegments": 128,
-      "depthBias": 0.0,
-      "useDepthTest": false,
-      "tintColor": "0x70ffe2",
+      "useDepthTest": true,
+      "tintColor": "0x916D55",
       "tintStrength": 0.85,
-      "opacity": 0.5
+      "opacity": 1.0
     },
     "flameMovement": {
       "maskPath": "assets/bg2FlameMask.webp",
@@ -554,13 +553,21 @@
     },
     "candleFlameScreen": {
       "enabled": true,
-      "flameProjection": "texturePlane",
+      "flameProjection": "texturePlaneFlipY",
+      "proximityQuad": {
+        "corners": [
+          { "x": 0.087, "y": 0.87 },
+          { "x": 0.093, "y": 0.87 },
+          { "x": 0.11, "y": 0.812 },
+          { "x": 0.093, "y": 0.8 }
+        ]
+      },
       "flamePositionSource": "maskCentroid",
       "maskCentroidPath": "assets/bg2FlameMask.webp",
       "maskCentroidMinBrightness": 200,
       "maskCentroidMinAlpha": 8,
       "innerRadius": 0.045,
-      "proximityOuterMax": 0.3,
+      "proximityOuterMax": 0.6,
       "vignetteFade": {
         "enabled": true,
         "outerRadius": 0.15,
@@ -599,7 +606,7 @@
     },
     "screenVignette": {
       "halfResScale": 0.25,
-      "strength": 1,
+      "strength": 0.75,
       "color": "0x000000",
       "inner": 0.65,
       "outer": 1.4,

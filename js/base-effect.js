@@ -67,6 +67,9 @@ const log = (...args) => {
     }
 };
 
+/** Coarse area overlays (e.g. foliage, character tint) sit slightly toward the camera for stable depth tests; XY scale is corrected in syncWithParallaxMesh so framing matches the main parallax plane. */
+export const PARALLAX_COARSE_OVERLAY_Z = 0.012;
+
 class BaseEffect {
     constructor(scene, camera, renderer, parallaxInstance) {
         log('BaseEffect: Initializing base effect');
@@ -432,12 +435,26 @@ class BaseEffect {
      * Applies the current parallax mesh transform (position, scale) to the given mesh.
      * Call this from update() or from updatePositionsForMeshTransform(meshTransform) so the overlay stays aligned with the background.
      * @param {THREE.Mesh} mesh - The area effect overlay mesh to sync
+     * @param {object} [options]
+     * @param {number} [options.overlayZ=0] - Added to mesh.position.z (after parallax root z). Use PARALLAX_COARSE_OVERLAY_Z for foliage / character tint.
+     * @param {boolean} [options.perspectiveCompensate=true] - When overlayZ ≠ 0, scale XY by (camZ−baseZ−overlayZ)/(camZ−baseZ) so apparent size matches the unshifted plane (removes subtle “zoom”).
      */
-    syncWithParallaxMesh(mesh) {
+    syncWithParallaxMesh(mesh, options = {}) {
         if (!mesh || !this.parallax || !this.parallax.meshTransform) return;
         const t = this.parallax.meshTransform;
-        mesh.position.set(t.position.x, t.position.y, t.position.z);
-        const s = t.scale;
+        const overlayZ = Number(options.overlayZ) || 0;
+        mesh.position.set(t.position.x, t.position.y, t.position.z + overlayZ);
+        let s = t.scale;
+        const compensate = options.perspectiveCompensate !== false;
+        if (overlayZ !== 0 && compensate && this.camera?.position) {
+            const camZ = this.camera.position.z;
+            const baseZ = t.position.z;
+            const farDist = camZ - baseZ;
+            const nearDist = camZ - baseZ - overlayZ;
+            if (farDist > 1e-6 && nearDist > 1e-3) {
+                s *= nearDist / farDist;
+            }
+        }
         mesh.scale.set(s, s, 1);
     }
     
