@@ -511,7 +511,41 @@
       "useDepthTest": true,
       "tintColor": "0x916D55",
       "tintStrength": 0.85,
-      "opacity": 1.0
+      "opacity": 1.0,
+      "burn": {
+        "enabled": true,
+        "burnOutDuration": 2.2,
+        "burnInDuration": 2.8,
+        "noiseScale": 15.0,
+        "noiseOffset": { "x": 0, "y": 0 },
+        "edgeSoftness": 0.07,
+        "charWidth": 0.1,
+        "fireSigma": 0.035,
+        "charIntensity": 0.75,
+        "fireStrength": 10,
+        "charColor": "0x2a1810",
+        "fireHot": "0xd7b400",
+        "fireMid": "0x00ffff",
+        "noiseTimeScale": 0.15,
+        "noiseTimeAmount": 0.08,
+        "noiseOctaves": 5,
+        "noiseSeedRandomize": true,
+        "interaction": {
+          "doubleClickToggle": true,
+          "debugShowTriggerPolygon": true,
+          "triggerPolygon": {
+            "enabled": true,
+            "planarProjection": false,
+            "corners": [
+              { "x": 0, "y": 0.39 },
+              { "x": 0, "y": 0.225 },
+              { "x": 0.235, "y": 0.18 },
+              { "x": 0.42, "y": 0.63 },
+              { "x": 0.205, "y": 0.63 }
+            ]
+          }
+        }
+      }
     },
     "flameMovement": {
       "maskPath": "assets/bg2FlameMask.webp",
