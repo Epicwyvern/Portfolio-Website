@@ -545,6 +545,56 @@
         }
       }
     },
+    "potionBubbles": {
+      "maskPath": "assets/bg2PotionMask.webp",
+      "maskChannel": "alphaLuminance",
+      "maskIgnoreBelow": 0,
+      "maskInvert": false,
+      "overlaySegments": 64,
+      "depthBias": 0.011,
+      "opacity": 1.0,
+      "liquidShakeStrength": 0.0005,
+      "liquidShakeSpeed": 3.0,
+      "liquidShakeScale": 100.0,
+      "meniscusUvY": 0.72,
+      "meniscusBand": 0.12,
+      "meniscusShakeBoost": 2.0,
+      "meniscusTop": {
+        "uvY": 0.838,
+        "curvature": -7,
+        "curveCenterU": 0.295,
+        "band": 0.12,
+        "surge": 0.0
+      },
+      "meniscusBottom": {
+        "uvY": 0.82,
+        "curvature": 7,
+        "curveCenterU": 0.285,
+        "band": 0.1,
+        "surge": 1.15
+      },
+      "midColumnSlosh": 2.0,
+      "bubblePopBand": 0.055,
+      "bubbleBuoyancy": 0.85,
+      "clipMotionToColumn": false,
+      "meniscusHighlight": {
+        "enabled": false,
+        "strength": 0.85,
+        "lineWidth": 0.0035,
+        "topColor": "0x3399ff",
+        "bottomColor": "0xff8844"
+      },
+      "bubbleScaleA": 56.0,
+      "bubbleScaleB": 90.0,
+      "bubbleScaleC": 138.0,
+      "bubbleRadiusA": 0.31,
+      "bubbleRadiusB": 0.27,
+      "bubbleRadiusC": 0.23,
+      "bubbleRiseSpeed": 1.0,
+      "bubbleDisplacement": 0.0024,
+      "bubbleShellThickness": 0.09,
+      "bubbleHighlightStrength": 0.055
+    },
     "flameMovement": {
       "maskPath": "assets/bg2FlameMask.webp",
       "overlaySegments": 64,

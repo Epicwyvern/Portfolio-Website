@@ -111,17 +111,25 @@ const FRAGMENT_SHADER = `
         return t.a;
     }
 
-    float hash(vec2 p) {
-        return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
+    // Fract/dot hash — stable for large lattice indices (unlike sin(dot(huge)) in float32).
+    vec2 hash2(vec2 p) {
+        vec3 p3 = fract(vec3(p.xyx) * vec3(0.1031, 0.1030, 0.0973));
+        p3 += dot(p3, p3.yxz + 33.33);
+        return fract((p3.xx + p3.yz) * p3.zy);
     }
 
+    float vhash(vec2 p) {
+        return hash2(p).x;
+    }
+
+    // Value noise with quintic smoothstep (smoother across cell edges than cubic; same gritty FBM character).
     float noise2(vec2 p) {
         vec2 i = floor(p);
         vec2 f = fract(p);
-        vec2 u = f * f * (3.0 - 2.0 * f);
+        vec2 u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
         return mix(
-            mix(hash(i + vec2(0.0, 0.0)), hash(i + vec2(1.0, 0.0)), u.x),
-            mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), u.x),
+            mix(vhash(i + vec2(0.0, 0.0)), vhash(i + vec2(1.0, 0.0)), u.x),
+            mix(vhash(i + vec2(0.0, 1.0)), vhash(i + vec2(1.0, 1.0)), u.x),
             u.y
         );
     }
