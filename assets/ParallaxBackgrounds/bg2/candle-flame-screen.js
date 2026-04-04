@@ -14,13 +14,13 @@ const log = (...args) => {
  * Maps mesh UV + projection mode to canvas CSS pixels (matches pointer coords from getBoundingClientRect).
  * Used for proximity quad corners. Scratch vectors avoid per-frame allocation.
  */
-export function projectFlameAnchorToCanvasPixels(parallax, camera, flame, cfg, rect, proj, wpos, uvDisp) {
+export function projectFlameAnchorToCanvasPixels(parallax, camera, flame, cfg, rect, proj, wpos, uvDisp, skipMatrixUpdate) {
     if (!parallax || !camera || !rect || !flame) return null;
     const mode = cfg.flameProjection ?? 'meshSurface';
     const t = parallax.meshTransform;
     if (!t) return null;
 
-    camera.updateMatrixWorld(true);
+    if (!skipMatrixUpdate) camera.updateMatrixWorld(true);
 
     if (mode === 'texturePlane' || mode === 'texturePlaneFlipY') {
         const mw = t.baseGeometrySize?.width * t.scale ?? 1;
@@ -64,7 +64,7 @@ export function projectFlameAnchorToCanvasPixels(parallax, camera, flame, cfg, r
  * mouse/tilt parallax like the rendered scene. Set `proximityQuad.planarProjection` to fall back to
  * {@link projectFlameAnchorToCanvasPixels} (flat `flameProjection` plane — does not track mesh depth).
  */
-export function projectProximityQuadCornerToCanvasPixels(parallax, camera, corner, cfg, quadCfg, rect, proj, wpos, uvDisp) {
+export function projectProximityQuadCornerToCanvasPixels(parallax, camera, corner, cfg, quadCfg, rect, proj, wpos, uvDisp, skipMatrixUpdate) {
     if (!parallax || !camera || !rect || !corner) return null;
     const zDef = cfg.flameZ ?? 0;
     if (quadCfg?.planarProjection === true) {
@@ -76,12 +76,15 @@ export function projectProximityQuadCornerToCanvasPixels(parallax, camera, corne
             rect,
             proj,
             wpos,
-            uvDisp
+            uvDisp,
+            skipMatrixUpdate
         );
     }
     if (parallax.getWorldPositionForUV && parallax.mesh) {
-        camera.updateMatrixWorld(true);
-        parallax.mesh.updateWorldMatrix(true, false);
+        if (!skipMatrixUpdate) {
+            camera.updateMatrixWorld(true);
+            parallax.mesh.updateWorldMatrix(true, false);
+        }
         const mode = cfg.flameProjection ?? 'meshSurface';
         const u = corner.x;
         let v = corner.y;
@@ -109,7 +112,8 @@ export function projectProximityQuadCornerToCanvasPixels(parallax, camera, corne
         rect,
         proj,
         wpos,
-        uvDisp
+        uvDisp,
+        skipMatrixUpdate
     );
 }
 
@@ -164,11 +168,16 @@ function distanceExteriorToConvexQuad(px, py, q) {
 
 const DEFAULT_QUAD_OUTER_BAND = 0.15;
 
+const _proxCorners = [{ x: 0, y: 0 }, { x: 0, y: 0 }, { x: 0, y: 0 }, { x: 0, y: 0 }];
+const _proxResult = { flameProximity: 0, vignetteTarget: 1, quadCornersPx: null };
+const _proxNoResult = { flameProximity: 0, vignetteTarget: 1, quadCornersPx: null };
+
 /**
- * Quad-only proximity: inside quad → flameProximity 1; outside → falloff within outer band.
+ * Quad-only proximity: inside quad -> flameProximity 1; outside -> falloff within outer band.
  * vignetteTarget: 0 inside quad (when vignetteFade enabled); outside ramps to 1 over same band.
  * Requires four valid corners; otherwise no candle proximity (flame 0, vignette full).
- * @returns {{ flameProximity: number, vignetteTarget: number, quadCornersPx: Array<{x:number,y:number}>|null }}
+ *
+ * NOTE: Returns a reusable object — read values immediately, do not cache the reference.
  */
 export function computeCandleProximityMetrics(parallax, camera, cfg, mousePixelX, mousePixelY, rect, scratch) {
     const s = scratch || {};
@@ -177,10 +186,10 @@ export function computeCandleProximityMetrics(parallax, camera, cfg, mousePixelX
     const uvDisp = s.uvDisp ?? (s.uvDisp = new THREE.Vector2());
 
     if (!parallax || !camera || !rect || cfg.enabled === false) {
-        return { flameProximity: 0, vignetteTarget: 1, quadCornersPx: null };
+        return _proxNoResult;
     }
     if (!parallax.meshTransform) {
-        return { flameProximity: 0, vignetteTarget: 1, quadCornersPx: null };
+        return _proxNoResult;
     }
 
     const minDim = Math.min(rect.width, rect.height);
@@ -193,7 +202,10 @@ export function computeCandleProximityMetrics(parallax, camera, cfg, mousePixelX
     const hasQuad = Array.isArray(corners) && corners.length === 4;
 
     if (hasQuad) {
-        const projected = [];
+        if (parallax.mesh) {
+            camera.updateMatrixWorld(true);
+            parallax.mesh.updateWorldMatrix(true, false);
+        }
         let ok = true;
         for (let i = 0; i < 4; i++) {
             const p = projectProximityQuadCornerToCanvasPixels(
@@ -205,19 +217,21 @@ export function computeCandleProximityMetrics(parallax, camera, cfg, mousePixelX
                 rect,
                 proj,
                 wpos,
-                uvDisp
+                uvDisp,
+                true
             );
             if (!p) {
                 ok = false;
                 break;
             }
-            projected.push({ x: p.px, y: p.py });
+            _proxCorners[i].x = p.px;
+            _proxCorners[i].y = p.py;
         }
-        if (ok) quadCornersPx = projected;
+        if (ok) quadCornersPx = _proxCorners;
     }
 
     if (!quadCornersPx) {
-        return { flameProximity: 0, vignetteTarget: 1, quadCornersPx: null };
+        return _proxNoResult;
     }
 
     const outerBandPx =
@@ -254,7 +268,10 @@ export function computeCandleProximityMetrics(parallax, camera, cfg, mousePixelX
         }
     }
 
-    return { flameProximity, vignetteTarget, quadCornersPx };
+    _proxResult.flameProximity = flameProximity;
+    _proxResult.vignetteTarget = vignetteTarget;
+    _proxResult.quadCornersPx = quadCornersPx;
+    return _proxResult;
 }
 
 const COMPOSITE_FRAGMENT_SHADER = `
@@ -443,9 +460,6 @@ const FLAME_PASS_FRAGMENT_SHADER = `
         float dr = clamp((1.0 - xNorm) * aspect / reach, 0.0, 1.0);
         float hWalls = min(dl, dr);
 
-        // Side "shelf" fix: when sm→0, min(db, mix(1,hWalls,sm)) jumps to db. Pull effective y
-        // downward on wall columns so fireSheet samples the field as if lower on the wall — wisps
-        // keep rising past the logical side cutoff instead of clipping to a horizontal line.
         float span = max(0.06, uSideRiseWallSpan);
         float nearL = 1.0 - smoothstep(0.0, span, dl);
         float nearR = 1.0 - smoothstep(0.0, span, dr);
@@ -457,6 +471,12 @@ const FLAME_PASS_FRAGMENT_SHADER = `
         float dbEff = clamp(yEff / reach, 0.0, 1.0);
         float hBlendEff = mix(1.0, hWalls, smEff);
         float hU = min(dbEff, hBlendEff);
+
+        float borderFade = 1.0 - smoothstep(0.4, 0.82, hU);
+        if (borderFade < 0.004) {
+            gl_FragColor = vec4(0.0);
+            return;
+        }
 
         float fragLiftPx = wallCol * riseRamp * uSideRiseFragLift * uResolution.y;
         vec2 fragFire = frag - vec2(0.0, fragLiftPx);
@@ -521,14 +541,15 @@ const FLAME_PASS_FRAGMENT_SHADER = `
             sparkRgb = sparksOut * bottomBand * mix(0.5, 1.0, edgeSparkMask);
         }
 
+        float ambientFade = 1.0 - smoothstep(0.0, 0.5, hU);
         vec3 fireRgb =
-            uColorCore * (0.18 + 1.05 * f) +
+            uColorCore * (0.18 * ambientFade + 1.05 * f) +
             uColorTip * (fff * 1.05) +
-            uColorSoot * ((1.0 - f) * 0.2 * uSootStrength);
-        vec3 smokeRgb = uColorSoot * smokeAmt * 0.45;
+            uColorSoot * ((1.0 - f) * 0.2 * uSootStrength * ambientFade);
+        vec3 smokeRgb = uColorSoot * smokeAmt * 0.45 * ambientFade;
         vec3 rgb = (fireRgb + smokeRgb + sparkRgb) * uOutputBoost;
 
-        float vis = uStrength * uIntensity;
+        float vis = uStrength * uIntensity * borderFade;
         vec3 outRgb = min(rgb * vis, vec3(3.0));
         gl_FragColor = vec4(outRgb, 1.0);
     }

@@ -1,5 +1,5 @@
 // Lantern Effect - Twinkling and shining lanterns for bg2 magical scene
-// Uses flare_1.png for particle-based twinkling effect with growth, fade, and overlay
+// Uses InstancedMesh for all particles — single draw call, zero GPU resource churn.
 
 import BaseEffect from '../../../js/base-effect.js';
 import * as THREE from 'https://unpkg.com/three@0.172.0/build/three.module.js';
@@ -10,18 +10,24 @@ const log = (...args) => {
     }
 };
 
+const _scratchMatrix = new THREE.Matrix4();
+const _scratchPosition = new THREE.Vector3();
+const _scratchQuaternion = new THREE.Quaternion();
+const _scratchScale = new THREE.Vector3();
+const _scratchColor = new THREE.Color();
+const _scratchEuler = new THREE.Euler();
+const _scratchDisp = new THREE.Vector2();
+
 class LanternEffect extends BaseEffect {
     async init() {
-        log('LanternEffect: Initializing twinkling lantern effect');
+        log('LanternEffect: Initializing instanced lantern effect');
         
         try {
-            // Load the flare texture for lanterns (only if not already loaded)
             if (!this.flareTexture) {
                 this.flareTexture = await this.loadTexture('./assets/ParallaxBackgrounds/bg2/assets/flare_1.png');
                 log('LanternEffect: Successfully loaded flare texture');
             }
             
-            // Load lantern configuration from parallax config (store full config for reference)
             if (!this.fullLanternConfig) {
                 this.fullLanternConfig = await this.loadLanternConfig();
                 log('LanternEffect: Loaded lantern configuration:', this.fullLanternConfig);
@@ -30,35 +36,30 @@ class LanternEffect extends BaseEffect {
             
             log(`LanternEffect: Creating ${lanternConfig.lanterns.length} lantern systems`);
             
-            // Positions are baked into the mesh: config stores UV (0-1). World position is computed
-            // each frame via parallax.getWorldPositionForUV(mesh.localToWorld)—no manual sync.
             this.lanternSystems = [];
+            let maxParticles = 0;
+
             lanternConfig.lanterns.forEach((lanternData, index) => {
                 try {
-                    // Merge with defaults - create all systems; runtime flag controls visibility
                     const config = { ...lanternConfig.defaults, ...lanternData };
-                    const lanternName = config.name;
                     
-                    // Config coordinates are image UV (u,v) 0-1; Z comes from mesh surface at that UV
                     const basePosition = new THREE.Vector3(
                         config.position.x ?? 0.5,
                         config.position.y ?? 0.5,
-                        0 // Z ignored; getWorldPositionForUV derives it from mesh geometry
+                        0
                     );
                     
-                    if (index === 0) log(`LanternEffect: Sample lantern system - basePosition (UV):`, basePosition);
-                    
-                    // Create lantern system; originPosition filled each frame from getWorldPositionForUV
                     const lanternSystem = {
                         name: config.name,
                         index: index,
-                        originPosition: new THREE.Vector3(), // Filled each frame from mesh
+                        originPosition: new THREE.Vector3(),
                         basePosition: basePosition,
                         config: config,
-                        particles: [], // Array of active particles
-                        nextParticleTime: 0, // When to spawn next particle
+                        particles: [],
+                        nextParticleTime: 0,
                     };
                     
+                    maxParticles += config.count || 3;
                     this.lanternSystems.push(lanternSystem);
                     log(`LanternEffect: Created lantern system ${index} (${config.name})`);
                     
@@ -66,6 +67,9 @@ class LanternEffect extends BaseEffect {
                     console.error(`LanternEffect: Error creating lantern system ${index}:`, error);
                 }
             });
+
+            this._maxParticles = maxParticles;
+            this._createInstancedMesh(lanternConfig);
             
             this._refreshDisabledLanterns();
             this._unsubLanternChange = this.parallax?.onLanternIndividualChange?.(
@@ -76,89 +80,172 @@ class LanternEffect extends BaseEffect {
                 this.setupClickToToggle();
             }
             
-            // Initialize animation properties
             this.time = 0;
             this.isInitialized = true;
             
-            log(`LanternEffect: Successfully initialized with ${this.lanternSystems.length} lantern systems`);
+            log(`LanternEffect: Initialized with ${this.lanternSystems.length} systems, max ${maxParticles} particles (1 draw call)`);
             
         } catch (error) {
             console.error('LanternEffect: Error during initialization:', error);
             throw error;
         }
     }
+
+    _createInstancedMesh(lanternConfig) {
+        const defaults = lanternConfig.defaults || {};
+        const blendMode = this.getBlendMode(defaults.blendMode || 'AdditiveBlending');
+        const alphaTest = defaults.alphaTest || 0.01;
+
+        const geometry = new THREE.PlaneGeometry(0.1, 0.1);
+        const material = new THREE.MeshBasicMaterial({
+            map: this.flareTexture,
+            transparent: true,
+            opacity: 1.0,
+            alphaTest: alphaTest,
+            blending: blendMode,
+            side: THREE.DoubleSide,
+            depthWrite: false,
+            depthTest: false,
+        });
+
+        this._instancedMesh = new THREE.InstancedMesh(geometry, material, this._maxParticles);
+        this._instancedMesh.count = 0;
+        this._instancedMesh.frustumCulled = false;
+
+        // Initialize all matrices to zero-scale (invisible) so unused slots don't render artifacts
+        _scratchMatrix.makeScale(0, 0, 0);
+        for (let i = 0; i < this._maxParticles; i++) {
+            this._instancedMesh.setMatrixAt(i, _scratchMatrix);
+        }
+        this._instancedMesh.instanceMatrix.needsUpdate = true;
+
+        this.scene.add(this._instancedMesh);
+        this.meshes.push(this._instancedMesh);
+        this.materials.push(material);
+    }
     
     update(deltaTime) {
-        if (!this.isInitialized) {
-            return;
-        }
+        if (!this.isInitialized || !this._instancedMesh) return;
         
-        // Initialize time if undefined
-        if (this.time === undefined) {
-            this.time = 0;
-            log('LanternEffect: Initialized time in update method');
-        }
+        if (this.time === undefined) this.time = 0;
         
-        // Update animation time
         const frameDelta = Number.isFinite(deltaTime) && deltaTime > 0 ? deltaTime : 0.016;
         this.time += frameDelta;
         
-        // Update each lantern system
-        this.lanternSystems.forEach((system, systemIndex) => {
+        let instanceIndex = 0;
+
+        for (let si = 0; si < this.lanternSystems.length; si++) {
+            const system = this.lanternSystems[si];
             try {
                 if (this._disabledLanterns?.has(system.name)) {
-                    if (system.particles.length > 0) {
-                        system.particles.forEach((p) => {
-                            this.scene.remove(p.mesh);
-                            p.mesh.geometry.dispose();
-                            p.mesh.material.dispose();
-                        });
-                        system.particles.length = 0;
-                    }
-                    return;
+                    system.particles.length = 0;
+                    continue;
                 }
-                // Bake position from mesh (UV -> world via mesh.localToWorld)
+
                 this.parallax?.getWorldPositionForUV(
                     system.basePosition.x, system.basePosition.y, 0,
                     system.originPosition
                 );
-                // Check if we need to spawn a new particle
+
                 if (this.time >= system.nextParticleTime && system.particles.length < system.config.count) {
-                    this.spawnParticle(system);
-                    
-                    // Schedule next particle spawn
+                    this._spawnParticle(system);
                     const spawnInterval = 1.0 / (system.config.newParticleSpeed || 1.0);
-                    const randomDelay = (Math.random() - 0.5) * spawnInterval * 0.5; // Add some randomness
+                    const randomDelay = (Math.random() - 0.5) * spawnInterval * 0.5;
                     system.nextParticleTime = this.time + spawnInterval + randomDelay;
                 }
-                
-                // Update existing particles
-                for (let i = system.particles.length - 1; i >= 0; i--) {
+
+                // Update particles, remove dead ones via swap-with-last
+                let i = 0;
+                while (i < system.particles.length) {
                     const particle = system.particles[i];
-                    
-                    // Update particle age
                     particle.age += frameDelta;
-                    
-                    // Check if particle has exceeded its lifetime
+
                     if (particle.age >= particle.lifetime) {
-                // Remove particle
-                this.scene.remove(particle.mesh);
-                particle.mesh.geometry.dispose();
-                particle.mesh.material.dispose();
-                system.particles.splice(i, 1);
-                continue;
+                        // Swap with last and pop — O(1) removal, no splice
+                        const last = system.particles.length - 1;
+                        if (i < last) system.particles[i] = system.particles[last];
+                        system.particles.length = last;
+                        continue;
                     }
-                    
-                    // Update particle animation
-                    this.updateParticle(particle, system);
+
+                    this._writeParticleInstance(particle, system, instanceIndex);
+                    instanceIndex++;
+                    i++;
                 }
                 
             } catch (error) {
-                console.error(`LanternEffect: Error updating lantern system ${systemIndex}:`, error);
+                console.error(`LanternEffect: Error updating lantern system ${si}:`, error);
             }
+        }
+
+        this._instancedMesh.count = instanceIndex;
+        if (instanceIndex > 0) {
+            this._instancedMesh.instanceMatrix.needsUpdate = true;
+            if (this._instancedMesh.instanceColor) {
+                this._instancedMesh.instanceColor.needsUpdate = true;
+            }
+        }
+    }
+
+    _spawnParticle(system) {
+        const config = system.config;
+        system.particles.push({
+            age: 0,
+            lifetime: config.lifetime * (0.7 + Math.random() * 0.6),
+            growthSpeed: config.growthSpeed || 2.0,
+            baseScale: config.scale || 1.0,
+            maxOpacity: config.opacity || 0.8,
+            baseColor: new THREE.Color(config.color || 0xffaa44),
+            rotation: Math.random() * Math.PI * 2,
         });
     }
     
+    _writeParticleInstance(particle, system, slotIndex) {
+        const lifeProgress = particle.age / particle.lifetime;
+        
+        // Scale: continuous growth
+        const currentScale = particle.growthSpeed * particle.age * particle.baseScale;
+
+        // Opacity: fade-in (0–20%), bright (20–70%), fade-out (70–100%)
+        let opacityProgress;
+        if (lifeProgress < 0.2) {
+            const t = lifeProgress / 0.2;
+            opacityProgress = 1 - (1 - t) * (1 - t); // easeOutQuad
+        } else if (lifeProgress < 0.7) {
+            opacityProgress = 1.0;
+        } else {
+            const t = (lifeProgress - 0.7) / 0.3;
+            opacityProgress = 1.0 - t * t; // easeInQuad
+        }
+        
+        // For additive blending, brightness IS opacity. Combine all intensity factors into color.
+        const normalizedOpacity = opacityProgress; 
+        const glowIntensity = 0.5 + normalizedOpacity * 0.5;
+        const brightness = opacityProgress * particle.maxOpacity * glowIntensity;
+        _scratchColor.copy(particle.baseColor).multiplyScalar(brightness);
+        this._instancedMesh.setColorAt(slotIndex, _scratchColor);
+
+        // Position: origin + parallax displacement
+        let px = system.originPosition.x;
+        let py = system.originPosition.y;
+        let pz = system.originPosition.z;
+
+        if (this.parallax?.getParallaxDisplacementForUV) {
+            this.parallax.getParallaxDisplacementForUV(
+                system.basePosition.x, system.basePosition.y, _scratchDisp
+            );
+            px += _scratchDisp.x;
+            py += _scratchDisp.y;
+        }
+
+        _scratchPosition.set(px, py, pz);
+        _scratchEuler.set(0, 0, particle.rotation);
+        _scratchQuaternion.setFromEuler(_scratchEuler);
+        _scratchScale.set(currentScale, currentScale, 1);
+        _scratchMatrix.compose(_scratchPosition, _scratchQuaternion, _scratchScale);
+        this._instancedMesh.setMatrixAt(slotIndex, _scratchMatrix);
+    }
+
     _getClickRadius(system) {
         const growth = system.config?.growthSpeed ?? 2.0;
         const lifetime = system.config?.lifetime ?? 2.5;
@@ -205,7 +292,6 @@ class LanternEffect extends BaseEffect {
         this._lastTouchEndAt = 0;
 
         const handleClick = (e) => {
-            // Ignore synthetic click events generated right after touch interactions.
             if (performance.now() - (this._lastTouchEndAt || 0) < 700) return;
             const system = this._findLanternAtClientXY(e.clientX, e.clientY);
             if (system) {
@@ -301,123 +387,6 @@ class LanternEffect extends BaseEffect {
         }
     }
     
-    spawnParticle(system) {
-        try {
-            // Get blend mode from config
-            const blendMode = this.getBlendMode(system.config.blendMode || 'AdditiveBlending');
-            const depthWrite = system.config.depthWrite !== undefined ? system.config.depthWrite : false;
-            const depthTest = system.config.depthTest !== undefined ? system.config.depthTest : false;
-            const alphaTest = system.config.alphaTest || 0.01;
-            
-            // Create particle mesh with configurable blend mode
-            // depthTest: true = sample depth buffer so nearer mesh (e.g. foreground tree) occludes the flare
-            // depthWrite: usually false for transparent/additive so we do not overwrite scene depth incorrectly
-            // depthTest: false (default) = glow draws on top of everything
-            // Position uses exact mesh depth for perfect parallax alignment
-            const particle = this.createPlaneMesh(
-                0.1, // Base size - will be scaled
-                0.1, 
-                this.flareTexture, 
-                system.originPosition.clone(),
-                {
-                    transparent: true,
-                    alphaTest: alphaTest,
-                    blending: blendMode,
-                    side: THREE.DoubleSide,
-                    depthWrite: depthWrite,
-                    depthTest: depthTest
-                }
-            );
-            
-            // Random rotation for this particle
-            const randomRotation = Math.random() * Math.PI * 2;
-            particle.rotation.z = randomRotation;
-            
-            // Create particle data
-            const particleData = {
-                mesh: particle,
-                age: 0,
-                lifetime: system.config.lifetime * (0.7 + Math.random() * 0.6), // Random lifetime variation
-                growthSpeed: system.config.growthSpeed || 2.0,
-                baseScale: system.config.scale || 1.0, // Base scale multiplier for the growth
-                maxOpacity: system.config.opacity || 0.8,
-                color: system.config.color || 0xffaa44,
-                initialRotation: randomRotation,
-                colorObj: new THREE.Color(system.config.color || 0xffaa44),
-                glowColor: new THREE.Color(system.config.color || 0xffaa44)
-            };
-            
-            // Store reference to system for parallax movement
-            particle.userData = {
-                system: system,
-                particleData: particleData
-            };
-            
-            system.particles.push(particleData);
-            
-        } catch (error) {
-            console.error('LanternEffect: Error spawning particle:', error);
-        }
-    }
-    
-    updateParticle(particle, system) {
-        try {
-            const mesh = particle.mesh;
-            const lifeProgress = particle.age / particle.lifetime;
-            
-            // Continuous growth animation: grows throughout lifetime based on growthSpeed
-            const currentScale = particle.growthSpeed * particle.age * particle.baseScale;
-            mesh.scale.set(currentScale, currentScale, 1);
-            
-            // Opacity animation: fade in, stay bright, then fade out
-            let opacityProgress;
-            if (lifeProgress < 0.2) {
-                // Fade in phase (0 to 20% of lifetime)
-                opacityProgress = lifeProgress / 0.2;
-                opacityProgress = this.easeOutQuad(opacityProgress);
-            } else if (lifeProgress < 0.7) {
-                // Bright phase (20% to 70% of lifetime)
-                opacityProgress = 1.0;
-            } else {
-                // Fade out phase (70% to 100% of lifetime)
-                const fadeProgress = (lifeProgress - 0.7) / 0.3;
-                opacityProgress = 1.0 - this.easeInQuad(fadeProgress);
-            }
-            
-            mesh.material.opacity = opacityProgress * particle.maxOpacity;
-            
-            // Color tinting for glow effect
-            const currentOpacity = mesh.material.opacity;
-            const normalizedOpacity = currentOpacity / particle.maxOpacity;
-            const glowIntensity = 0.5 + normalizedOpacity * 0.5;
-            particle.glowColor.copy(particle.colorObj).multiplyScalar(glowIntensity);
-            mesh.material.color.copy(particle.glowColor);
-            
-            // Apply parallax movement - same formula as mesh vertex shader; full displacement for perfect alignment
-            let parallaxOffsetX = 0;
-            let parallaxOffsetY = 0;
-            if (this.parallax?.getParallaxDisplacementForUV) {
-                const disp = this.parallax.getParallaxDisplacementForUV(
-                    system.basePosition.x, system.basePosition.y
-                );
-                parallaxOffsetX = disp.x;
-                parallaxOffsetY = disp.y;
-            }
-            // World Z: mesh surface at lantern UV. Optional depthBias (world units) moves the quad toward +Z
-            // (camera sits on +Z) so depthTest can ignore parallax-stretched edge geometry while the solid
-            // trunk still occludes. Tune per lantern when depthTest is true.
-            const db = system.config.depthBias;
-            const zBias = typeof db === 'number' && Number.isFinite(db) ? db : 0;
-            mesh.position.x = system.originPosition.x + parallaxOffsetX;
-            mesh.position.y = system.originPosition.y + parallaxOffsetY;
-            mesh.position.z = system.originPosition.z + zBias;
-                
-            } catch (error) {
-            console.error('LanternEffect: Error updating particle:', error);
-        }
-    }
-    
-    // Blend mode configuration helper
     getBlendMode(blendModeString) {
         const blendModes = {
             'NoBlending': THREE.NoBlending,
@@ -427,71 +396,32 @@ class LanternEffect extends BaseEffect {
             'MultiplyBlending': THREE.MultiplyBlending,
             'CustomBlending': THREE.CustomBlending
         };
-        
         return blendModes[blendModeString] || THREE.AdditiveBlending;
     }
-    
-    // Easing functions for smooth animations
-    easeOutCubic(t) {
-        return 1 - Math.pow(1 - t, 3);
-    }
-    
-    easeInCubic(t) {
-        return t * t * t;
-    }
-    
-    easeOutQuad(t) {
-        return 1 - (1 - t) * (1 - t);
-    }
-    
-    easeInQuad(t) {
-        return t * t;
-    }
-    
-    easeInOutQuart(t) {
-        return t < 0.5 ? 8 * t * t * t * t : 1 - Math.pow(-2 * t + 2, 4) / 2;
-    }
-    
-    easeOutBack(t) {
-        const c1 = 1.70158;
-        const c3 = c1 + 1;
-        return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2);
-    }
-    
-    // No-op: lantern positions are baked into the mesh via getWorldPositionForUV (UV -> mesh.localToWorld)
+
     updatePositionsForMeshTransform(_meshTransform) {
         // Positions computed each frame from parallax.getWorldPositionForUV in update()
     }
     
-    // Calculate what the mesh transform would be at a canonical/reference viewport size
     calculateCanonicalMeshTransform() {
-        // Get reference viewport size from config
         const referenceViewport = this.parallax.config.settings.referenceViewport || { width: 1920, height: 1080 };
         const REFERENCE_WIDTH = referenceViewport.width;
         const REFERENCE_HEIGHT = referenceViewport.height;
         
-        log(`LanternEffect: Calculating canonical transform for reference viewport: ${REFERENCE_WIDTH}x${REFERENCE_HEIGHT}`);
-        
-        // Replicate the same mesh transform calculation from parallax.js but for reference viewport
         const containerAspect = REFERENCE_WIDTH / REFERENCE_HEIGHT;
         const imageAspect = this.parallax.depthData.width / this.parallax.depthData.height;
-        const cameraZ = this.parallax.camera.position.z; // Use same camera Z as current
+        const cameraZ = this.parallax.camera.position.z;
         const visibleHeight = 2 * Math.tan(THREE.MathUtils.degToRad(45/2)) * cameraZ;
-        const visibleWidth = visibleHeight * containerAspect; // Use reference aspect ratio
+        const visibleWidth = visibleHeight * containerAspect;
         
-        // Calculate scale the same way as in createMesh()
         let baseScale;
         if (containerAspect > imageAspect) {
-            // Viewport is wider than image - scale by width to fill horizontally
             baseScale = visibleWidth / this.parallax.mesh.geometry.parameters.width;
         } else {
-            // Viewport is taller than image - scale by height to fill vertically
             baseScale = visibleHeight / this.parallax.mesh.geometry.parameters.height;
         }
         
         const finalScale = baseScale * this.parallax.extraScale;
-        
-        // Calculate position the same way as in positionMeshByFocalPoint()
         const scaledMeshWidth = this.parallax.mesh.geometry.parameters.width * finalScale;
         const scaledMeshHeight = this.parallax.mesh.geometry.parameters.height * finalScale;
         const overflowX = scaledMeshWidth - visibleWidth;
@@ -499,7 +429,7 @@ class LanternEffect extends BaseEffect {
         const offsetX = (0.5 - this.parallax.focalPoint.x) * overflowX;
         const offsetY = (0.5 - this.parallax.focalPoint.y) * overflowY;
         
-        const canonicalTransform = {
+        return {
             scale: finalScale,
             position: { x: offsetX, y: offsetY, z: 0 },
             baseGeometrySize: { 
@@ -507,17 +437,12 @@ class LanternEffect extends BaseEffect {
                 height: this.parallax.mesh.geometry.parameters.height
             }
         };
-        
-        log('LanternEffect: Canonical transform calculated:', canonicalTransform);
-        return canonicalTransform;
     }
     
-    // Load lantern configuration from the parallax config JSON
     async loadLanternConfig() {
         log('LanternEffect: Loading lantern configuration from parallax config');
         
         try {
-            // Access the parallax config (which should already be loaded)
             if (!this.parallax || !this.parallax.config || !this.parallax.config.effects || !this.parallax.config.effects.lanterns) {
                 console.warn('LanternEffect: No lantern config found in parallax config, using fallback');
                 return this.getFallbackConfig();
@@ -525,7 +450,6 @@ class LanternEffect extends BaseEffect {
             
             const lanternConfig = this.parallax.config.effects.lanterns;
             
-            // Parse color strings to hex numbers
             if (lanternConfig.defaults && lanternConfig.defaults.color) {
                 lanternConfig.defaults.color = parseInt(lanternConfig.defaults.color, 16);
             }
@@ -545,10 +469,7 @@ class LanternEffect extends BaseEffect {
         }
     }
     
-    // Fallback configuration if JSON config fails
     getFallbackConfig() {
-        log('LanternEffect: Using fallback lantern configuration');
-        
         return {
             defaults: {
                 scale: 1.0,
@@ -569,36 +490,37 @@ class LanternEffect extends BaseEffect {
         };
     }
     
-    // Method to get lantern system by name
     getLanternSystem(name) {
         return this.lanternSystems.find(system => system.name === name);
     }
     
-    // Method to set global intensity for all systems
     setGlobalIntensity(intensity) {
         this.lanternSystems.forEach(system => {
             system.config.opacity = intensity;
-            // Update existing particles
             system.particles.forEach(particle => {
                 particle.maxOpacity = intensity;
             });
         });
     }
     
-    // Clean up all particles and systems
     cleanup() {
         if (this.lanternSystems) {
             this.lanternSystems.forEach(system => {
-                system.particles.forEach(particle => {
-                    if (particle.mesh) {
-                        this.scene.remove(particle.mesh);
-                        if (particle.mesh.geometry) particle.mesh.geometry.dispose();
-                        if (particle.mesh.material) particle.mesh.material.dispose();
-                    }
-                });
-                system.particles = [];
+                system.particles.length = 0;
             });
             this.lanternSystems = [];
+        }
+
+        if (this._instancedMesh) {
+            this.scene.remove(this._instancedMesh);
+            this._instancedMesh.geometry?.dispose();
+            this._instancedMesh.material?.dispose();
+            // Remove from parent tracking so base cleanup doesn't double-dispose
+            const mi = this.meshes.indexOf(this._instancedMesh);
+            if (mi >= 0) this.meshes.splice(mi, 1);
+            const mai = this.materials.indexOf(this._instancedMesh.material);
+            if (mai >= 0) this.materials.splice(mai, 1);
+            this._instancedMesh = null;
         }
         
         if (typeof this._unsubLanternChange === 'function') {
@@ -627,21 +549,15 @@ class LanternEffect extends BaseEffect {
             this._touchCancelHandler = null;
         }
         this._activeTouchToggle = null;
-        // Don't clear fullLanternConfig or flareTexture - keep them for re-init
-        // Reset time to prevent stale state
         this.time = 0;
         
-        // Remove textures from parent's textures array so they don't get disposed
-        // We want to keep them for re-init
         if (this.flareTexture && this.textures.includes(this.flareTexture)) {
             const index = this.textures.indexOf(this.flareTexture);
             this.textures.splice(index, 1);
         }
         
-        // Call parent cleanup
         super.cleanup();
         
-        // Restore texture reference after cleanup
         if (this.flareTexture) {
             this.textures.push(this.flareTexture);
         }

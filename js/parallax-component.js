@@ -25,39 +25,6 @@ class ParallaxBackground {
         
         // Initialize the parallax system with the specified background
         this.parallax = new SimpleParallax(this.backgroundName);
-        
-        // FPS counter (visibility controlled by ui.showFpsCounter flag)
-        this._setupFpsCounter();
-    }
-    
-    _setupFpsCounter() {
-        const el = document.createElement('div');
-        el.id = 'fps-counter';
-        el.className = 'fps-counter';
-        el.textContent = 'FPS: --';
-        el.style.cssText = 'position:absolute;top:20px;left:20px;color:#00ff90;font-family:"Courier New",monospace;font-size:12px;z-index:1100;background:rgba(0,0,0,0.8);padding:6px 8px;border-radius:4px;border:1px solid #1f3d2b;min-width:70px;text-align:center;display:none';
-        this.container.appendChild(el);
-        
-        let frames = 0;
-        let lastTime = performance.now();
-        let visibilitySet = false;
-        
-        const update = (now) => {
-            frames += 1;
-            const elapsed = now - lastTime;
-            if (elapsed >= 500) {
-                const fps = (frames * 1000) / elapsed;
-                el.textContent = `FPS: ${fps.toFixed(1)}`;
-                frames = 0;
-                lastTime = now;
-            }
-            if (!visibilitySet && this.parallax?.flags && 'ui' in this.parallax.flags) {
-                visibilitySet = true;
-                el.style.display = this.parallax.getFlag('ui.showFpsCounter', false) ? 'block' : 'none';
-            }
-            requestAnimationFrame(update);
-        };
-        requestAnimationFrame(update);
     }
     
     // Method to change background image
