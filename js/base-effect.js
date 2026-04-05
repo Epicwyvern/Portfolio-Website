@@ -70,6 +70,127 @@ const log = (...args) => {
 /** Coarse area overlays (e.g. foliage, character tint) sit slightly toward the camera for stable depth tests; XY scale is corrected in syncWithParallaxMesh so framing matches the main parallax plane. */
 export const PARALLAX_COARSE_OVERLAY_Z = 0.012;
 
+// --- Area effects: optional `passUvBounds` + `passUvBoundsHighlight` (texture UV 0–1) ---
+
+/**
+ * @param {Record<string, unknown>} config Effect config (e.g. `parallax.config.effects.waterRipple`).
+ * @returns {{ minX: number, minY: number, maxX: number, maxY: number }}
+ */
+export function resolvePassUvBounds(config) {
+    const b = config.passUvBounds && typeof config.passUvBounds === 'object' ? config.passUvBounds : null;
+    if (!b) {
+        return { minX: 0, minY: 0, maxX: 1, maxY: 1 };
+    }
+    let minX = Number(b.minX ?? 0);
+    let minY = Number(b.minY ?? 0);
+    let maxX = Number(b.maxX ?? 1);
+    let maxY = Number(b.maxY ?? 1);
+    minX = Math.max(0, Math.min(1, minX));
+    minY = Math.max(0, Math.min(1, minY));
+    maxX = Math.max(0, Math.min(1, maxX));
+    maxY = Math.max(0, Math.min(1, maxY));
+    if (maxX <= minX) maxX = Math.min(1, minX + 0.001);
+    if (maxY <= minY) maxY = Math.min(1, minY + 0.001);
+    return { minX, minY, maxX, maxY };
+}
+
+/** @param {unknown} hex @param {number} fallback */
+export function effectConfigHexToInt(hex, fallback) {
+    let s = String(hex ?? '').trim();
+    if (s.startsWith('#')) s = '0x' + s.slice(1);
+    const withPrefix = s.startsWith('0x') || s.startsWith('0X') ? s : '0x' + s;
+    const n = parseInt(withPrefix, 16);
+    return Number.isFinite(n) ? n : fallback;
+}
+
+/**
+ * Debug outline for `passUvBounds` (optional).
+ * @param {Record<string, unknown>} config
+ */
+export function resolvePassUvBoundsHighlight(config) {
+    const h = config.passUvBoundsHighlight && typeof config.passUvBoundsHighlight === 'object' ? config.passUvBoundsHighlight : {};
+    const enabled = h.enabled === true;
+    return {
+        strength: enabled ? Math.max(0, Math.min(2, Number(h.strength ?? 0.85))) : 0,
+        lineWidth: Math.max(0.0003, Math.min(0.05, Number(h.lineWidth ?? 0.004))),
+        color: effectConfigHexToInt(h.color, 0x44ff99)
+    };
+}
+
+/**
+ * Min/max only (stencil, simulation RT, etc.).
+ * @param {Record<string, unknown>} uniforms
+ * @param {Record<string, unknown>} config
+ * @param {typeof import('three')} THREE
+ */
+export function mergePassUvBoundsMinMaxUniforms(uniforms, config, THREE) {
+    const pb = resolvePassUvBounds(config);
+    uniforms.uPassUvMin = { value: new THREE.Vector2(pb.minX, pb.minY) };
+    uniforms.uPassUvMax = { value: new THREE.Vector2(pb.maxX, pb.maxY) };
+    return uniforms;
+}
+
+export function syncPassUvBoundsMinMaxUniforms(uniforms, config) {
+    if (!uniforms?.uPassUvMin?.value || !uniforms?.uPassUvMax?.value) return;
+    const pb = resolvePassUvBounds(config);
+    uniforms.uPassUvMin.value.set(pb.minX, pb.minY);
+    uniforms.uPassUvMax.value.set(pb.maxX, pb.maxY);
+}
+
+/**
+ * Full pass-UV uniforms including optional debug outline (display / main overlay shaders).
+ * @param {Record<string, unknown>} uniforms
+ * @param {Record<string, unknown>} config
+ * @param {typeof import('three')} THREE
+ */
+export function mergeAreaPassUvBoundsUniforms(uniforms, config, THREE) {
+    mergePassUvBoundsMinMaxUniforms(uniforms, config, THREE);
+    const hi = resolvePassUvBoundsHighlight(config);
+    uniforms.uPassBoundsHiStrength = { value: hi.strength };
+    uniforms.uPassBoundsHiLineWidth = { value: hi.lineWidth };
+    uniforms.uPassBoundsHiColor = { value: new THREE.Color(hi.color) };
+    return uniforms;
+}
+
+export function syncAreaPassUvBoundsUniforms(uniforms, config) {
+    syncPassUvBoundsMinMaxUniforms(uniforms, config);
+    if (!uniforms?.uPassBoundsHiStrength) return;
+    const hi = resolvePassUvBoundsHighlight(config);
+    uniforms.uPassBoundsHiStrength.value = hi.strength;
+    uniforms.uPassBoundsHiLineWidth.value = hi.lineWidth;
+    uniforms.uPassBoundsHiColor.value.setHex(hi.color);
+}
+
+/** Insert with other `uniform` lines; requires `varying vec2 vUv`. */
+export const GLSL_AREA_PASS_UV_BOUNDS_UNIFORMS = `
+    uniform vec2 uPassUvMin;
+    uniform vec2 uPassUvMax;
+    uniform float uPassBoundsHiStrength;
+    uniform float uPassBoundsHiLineWidth;
+    uniform vec3 uPassBoundsHiColor;
+`;
+
+/** Stencil / sim: only min–max. */
+export const GLSL_AREA_PASS_UV_MINMAX_UNIFORMS = `
+    uniform vec2 uPassUvMin;
+    uniform vec2 uPassUvMax;
+`;
+
+/** First lines inside `void main()` for display shaders: discard outside box + `passLine` for outline. */
+export const GLSL_AREA_PASS_UV_BOUNDS_DISCARD_AND_LINE = `
+        if (vUv.x < uPassUvMin.x || vUv.x > uPassUvMax.x || vUv.y < uPassUvMin.y || vUv.y > uPassUvMax.y)
+            discard;
+        float passEdgeDist = min(
+            min(vUv.x - uPassUvMin.x, uPassUvMax.x - vUv.x),
+            min(vUv.y - uPassUvMin.y, uPassUvMax.y - vUv.y)
+        );
+        float passPw = max(0.0004, uPassBoundsHiLineWidth);
+        float passLine = 0.0;
+        if (uPassBoundsHiStrength > 0.0001) {
+            passLine = exp(-pow(passEdgeDist / passPw, 2.0));
+        }
+`;
+
 class BaseEffect {
     constructor(scene, camera, renderer, parallaxInstance) {
         log('BaseEffect: Initializing base effect');

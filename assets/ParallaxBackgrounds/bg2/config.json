@@ -349,6 +349,18 @@
       ]
     },
     "waterRipple": {
+      "passUvBounds": {
+        "minX": 0.47,
+        "minY": 0.08,
+        "maxX": 0.86,
+        "maxY": 0.65
+      },
+      "passUvBoundsHighlight": {
+        "enabled": false,
+        "strength": 0.9,
+        "lineWidth": 0.004,
+        "color": "0x44ff99"
+      },
       "maxWakeInstances": 16,
       "maxSplooshInstances": 16,
       "simulation": {
@@ -422,6 +434,18 @@
       }
     },
     "foliageWind": {
+      "passUvBounds": {
+        "minX": 0.25,
+        "minY": 0.63,
+        "maxX": 0.93,
+        "maxY": 1
+      },
+      "passUvBoundsHighlight": {
+        "enabled": false,
+        "strength": 0.9,
+        "lineWidth": 0.004,
+        "color": "0x44ff99"
+      },
       "maskPath": "assets/bg2FoliageMask.webp",
       "overlaySegments": 128,
       "windStrength": 0.0025,
@@ -501,6 +525,18 @@
       }
     },
     "characterMaskTint": {
+      "passUvBounds": {
+        "minX": 0,
+        "minY": 0.16,
+        "maxX": 0.43,
+        "maxY": 0.66
+      },
+      "passUvBoundsHighlight": {
+        "enabled": false,
+        "strength": 0.9,
+        "lineWidth": 0.004,
+        "color": "0x44ff99"
+      },
       "maskPath": "assets/bg2CharacterMask.webp",
       "maskChannel": "luminance",
       "maskIgnoreBelow": 0,
@@ -530,7 +566,7 @@
         "noiseSeedRandomize": true,
         "interaction": {
           "doubleClickToggle": true,
-          "debugShowTriggerPolygon": true,
+          "debugShowTriggerPolygon": false,
           "triggerPolygon": {
             "enabled": true,
             "planarProjection": false,
@@ -550,8 +586,20 @@
       "maskChannel": "alphaLuminance",
       "maskIgnoreBelow": 0,
       "maskInvert": false,
-      "overlaySegments": 64,
-      "depthBias": 0.011,
+      "passUvBounds": {
+        "minX": 0.255,
+        "minY": 0.695,
+        "maxX": 0.342,
+        "maxY": 0.86
+      },
+      "passUvBoundsHighlight": {
+        "enabled": false,
+        "strength": 0.9,
+        "lineWidth": 0.004,
+        "color": "0x44ff99"
+      },
+      "overlaySegments": 16,
+      "useDepthTest": false,
       "opacity": 1.0,
       "liquidShakeStrength": 0.0005,
       "liquidShakeSpeed": 3.0,
@@ -596,6 +644,18 @@
       "bubbleHighlightStrength": 0.055
     },
     "flameMovement": {
+      "passUvBounds": {
+        "minX": 0.082,
+        "minY": 0.8,
+        "maxX": 0.113,
+        "maxY": 0.87
+      },
+      "passUvBoundsHighlight": {
+        "enabled": false,
+        "strength": 0.9,
+        "lineWidth": 0.004,
+        "color": "0x44ff99"
+      },
       "maskPath": "assets/bg2FlameMask.webp",
       "overlaySegments": 64,
       "displacementStrength": 0.0015,
@@ -622,6 +682,18 @@
       "twitchMaxInterval": 6.0
     },
     "flameGlow": {
+      "passUvBounds": {
+        "minX": 0.05,
+        "minY": 0.77,
+        "maxX": 0.14,
+        "maxY": 0.91
+      },
+      "passUvBoundsHighlight": {
+        "enabled": false,
+        "strength": 0.9,
+        "lineWidth": 0.004,
+        "color": "0x44ff99"
+      },
       "position": { "x": 0.098, "y": 0.84 },
       "glowColor": "0xff0000",
       "glowStrength": 1.0,

@@ -2,7 +2,13 @@
 // Uses grayscale mask for per-pixel wind influence, wind envelope for natural blow/calm cycles,
 // and back-and-forth mouse/touch tracking for interactive rustling with falling leaves.
 
-import BaseEffect, { PARALLAX_COARSE_OVERLAY_Z } from '../../../js/base-effect.js';
+import BaseEffect, {
+    GLSL_AREA_PASS_UV_BOUNDS_DISCARD_AND_LINE,
+    GLSL_AREA_PASS_UV_BOUNDS_UNIFORMS,
+    mergeAreaPassUvBoundsUniforms,
+    syncAreaPassUvBoundsUniforms,
+    PARALLAX_COARSE_OVERLAY_Z
+} from '../../../js/base-effect.js';
 import FoliageParticleEmitter from './foliage-particle-emitter.js';
 import * as THREE from 'https://unpkg.com/three@0.172.0/build/three.module.js';
 
@@ -29,7 +35,7 @@ const FRAGMENT_SHADER = `
     uniform float minInfluence;
     uniform float sharpness;
     uniform vec2 texelSize;
-
+${GLSL_AREA_PASS_UV_BOUNDS_UNIFORMS}
     uniform float windEnvelope;
     uniform vec2 windDirection;
 
@@ -87,12 +93,21 @@ const FRAGMENT_SHADER = `
     }
 
     void main() {
+${GLSL_AREA_PASS_UV_BOUNDS_DISCARD_AND_LINE}
         float maskValue = texture2D(maskMap, vUv).r;
-        if (maskValue <= 0.001) discard;
+        if (maskValue <= 0.001) {
+            if (passLine * uPassBoundsHiStrength < 0.012) discard;
+            gl_FragColor = vec4(uPassBoundsHiColor * passLine * uPassBoundsHiStrength, 1.0);
+            return;
+        }
 
         float normalized = clamp((maskValue - minInfluence) / max(0.0001, 1.0 - minInfluence), 0.0, 1.0);
         float influence = pow(normalized, max(0.01, influenceCurve));
-        if (influence <= 0.001) discard;
+        if (influence <= 0.001) {
+            if (passLine * uPassBoundsHiStrength < 0.012) discard;
+            gl_FragColor = vec4(uPassBoundsHiColor * passLine * uPassBoundsHiStrength, 1.0);
+            return;
+        }
 
         // Ambient wind
         float env = windEnvelope;
@@ -152,6 +167,7 @@ const FRAGMENT_SHADER = `
         float blendAmount = influence;
         vec3 mixedColor = mix(baseColor.rgb, sharpened, blendAmount);
         vec3 color = mixedColor * (1.0 + shimmer * shimmerStrength * influence * env);
+        color = min(color + uPassBoundsHiColor * passLine * uPassBoundsHiStrength, vec3(1.0));
 
         gl_FragColor = vec4(color, 1.0);
     }
@@ -943,6 +959,8 @@ class FoliageWindEffect extends BaseEffect {
                 this.uniforms[this._rustleAlphaList[i]] = { value: 0 };
             }
 
+            mergeAreaPassUvBoundsUniforms(this.uniforms, config, THREE);
+
             this._baseWindSpeed = config.windSpeed ?? 0.25;
             this._initEnvelopeState(WIND_STATE.BLOWING);
 
@@ -996,6 +1014,7 @@ class FoliageWindEffect extends BaseEffect {
         this.uniforms.influenceCurve.value = config.influenceCurve ?? this.uniforms.influenceCurve.value;
         this.uniforms.minInfluence.value = config.minInfluence ?? this.uniforms.minInfluence.value;
         this.uniforms.sharpness.value = config.sharpness ?? this.uniforms.sharpness.value;
+        syncAreaPassUvBoundsUniforms(this.uniforms, config);
 
         // Rustle config hot-reload
         const rustleConfig = config.rustleInteraction || {};

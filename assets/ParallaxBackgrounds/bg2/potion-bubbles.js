@@ -1,7 +1,11 @@
 // Potion bubbles (bg2) — liquid column between curved upper/lower menisci; bubbles rise, pop at top; slosh weighted at menisci.
 // Mask top ≈ upper meniscus; mask bottom ≈ bottle floor. Meniscus shape: v += curvature*(u - curveCenterU)² (vertex at curveCenterU, default 0.5 = image center).
 
-import BaseEffect from '../../../js/base-effect.js';
+import BaseEffect, {
+    effectConfigHexToInt,
+    mergeAreaPassUvBoundsUniforms,
+    syncAreaPassUvBoundsUniforms
+} from '../../../js/base-effect.js';
 import * as THREE from 'https://unpkg.com/three@0.172.0/build/three.module.js';
 
 const log = (...args) => {
@@ -62,6 +66,11 @@ const FRAGMENT_SHADER = `
     uniform float uBubbleHighlightStrength;
 
     uniform float uRestrictToColumn;
+    uniform vec2 uPassUvMin;
+    uniform vec2 uPassUvMax;
+    uniform float uPassBoundsHiStrength;
+    uniform float uPassBoundsHiLineWidth;
+    uniform vec3 uPassBoundsHiColor;
     uniform float uMsHiStrength;
     uniform float uMsHiLineWidth;
     uniform vec3 uMsHiTopCol;
@@ -114,11 +123,29 @@ const FRAGMENT_SHADER = `
     }
 
     void main() {
+        // Skip entire heavy path outside texture UV AABB (full frame = 0–1; tighten for perf).
+        if (vUv.x < uPassUvMin.x || vUv.x > uPassUvMax.x || vUv.y < uPassUvMin.y || vUv.y > uPassUvMax.y)
+            discard;
+
+        float passEdgeDist = min(
+            min(vUv.x - uPassUvMin.x, uPassUvMax.x - vUv.x),
+            min(vUv.y - uPassUvMin.y, uPassUvMax.y - vUv.y)
+        );
+        float passPw = max(0.0004, uPassBoundsHiLineWidth);
+        float passLine = 0.0;
+        if (uPassBoundsHiStrength > 0.0001) {
+            passLine = exp(-pow(passEdgeDist / passPw, 2.0));
+        }
+
         vec4 ms = texture2D(maskMap, vUv);
         float m = rawMaskSample(ms);
         if (uMaskInvert > 0.5) m = 1.0 - m;
 
-        if (m < uMaskThreshold) discard;
+        if (m < uMaskThreshold) {
+            if (passLine * uPassBoundsHiStrength < 0.012) discard;
+            gl_FragColor = vec4(uPassBoundsHiColor * passLine * uPassBoundsHiStrength, passLine * uPassBoundsHiStrength * uOpacity);
+            return;
+        }
 
         float denom = max(0.00001, 1.0 - uMaskThreshold);
         float mScaled = clamp((m - uMaskThreshold) / denom, 0.0, 1.0);
@@ -200,6 +227,11 @@ const FRAGMENT_SHADER = `
             col = min(col, vec3(1.0));
         }
 
+        if (uPassBoundsHiStrength > 0.0001) {
+            col += uPassBoundsHiColor * passLine * uPassBoundsHiStrength;
+            col = min(col, vec3(1.0));
+        }
+
         gl_FragColor = vec4(col, mScaled * uOpacity);
     }
 `;
@@ -228,25 +260,14 @@ function resolveMenisciAndLiquid(config) {
     };
 }
 
-function potionHexToInt(hex, fallback) {
-    let s = String(hex ?? '').trim();
-    if (s.startsWith('#')) s = '0x' + s.slice(1);
-    const withPrefix = s.startsWith('0x') || s.startsWith('0X') ? s : '0x' + s;
-    const n = parseInt(withPrefix, 16);
-    return Number.isFinite(n) ? n : fallback;
-}
-
-/**
- * @param {Record<string, unknown>} config
- */
 function resolveMeniscusHighlight(config) {
     const h = config.meniscusHighlight && typeof config.meniscusHighlight === 'object' ? config.meniscusHighlight : {};
     const enabled = h.enabled === true;
     return {
         strength: enabled ? Math.max(0, Math.min(2, Number(h.strength ?? 0.45))) : 0,
         lineWidth: Math.max(0.0003, Math.min(0.04, Number(h.lineWidth ?? 0.0035))),
-        top: potionHexToInt(h.topColor, 0x3399ff),
-        bottom: potionHexToInt(h.bottomColor, 0xff8844)
+        top: effectConfigHexToInt(h.topColor, 0x3399ff),
+        bottom: effectConfigHexToInt(h.bottomColor, 0xff8844)
     };
 }
 
@@ -300,6 +321,8 @@ class PotionBubblesEffect extends BaseEffect {
         u.uBuoyancy.value = M.buoyancy;
 
         u.uRestrictToColumn.value = config.clipMotionToColumn === true ? 1.0 : 0.0;
+
+        syncAreaPassUvBoundsUniforms(u, config);
 
         const hi = resolveMeniscusHighlight(config);
         u.uMsHiStrength.value = hi.strength;
@@ -400,6 +423,7 @@ class PotionBubblesEffect extends BaseEffect {
                 uBubbleShell: { value: config.bubbleShellThickness ?? 0.09 },
                 uBubbleHighlightStrength: { value: config.bubbleHighlightStrength ?? 0.055 }
             };
+            mergeAreaPassUvBoundsUniforms(this.uniforms, config, THREE);
 
             this.overlayMesh = this.createCoarseAreaEffectMesh(
                 FRAGMENT_SHADER,

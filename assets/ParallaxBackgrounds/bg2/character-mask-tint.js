@@ -3,7 +3,13 @@
 // pixels that pass the mask threshold (black / ignored regions are discarded, no burn).
 // Uses the same coarse displaced geometry as water / foliage so the overlay tracks parallax.
 
-import BaseEffect, { PARALLAX_COARSE_OVERLAY_Z } from '../../../js/base-effect.js';
+import BaseEffect, {
+    GLSL_AREA_PASS_UV_BOUNDS_DISCARD_AND_LINE,
+    GLSL_AREA_PASS_UV_BOUNDS_UNIFORMS,
+    mergeAreaPassUvBoundsUniforms,
+    syncAreaPassUvBoundsUniforms,
+    PARALLAX_COARSE_OVERLAY_Z
+} from '../../../js/base-effect.js';
 import * as THREE from 'https://unpkg.com/three@0.172.0/build/three.module.js';
 
 const log = (...args) => {
@@ -101,7 +107,7 @@ const FRAGMENT_SHADER = `
     uniform float uNoiseTimeScale;
     uniform float uNoiseTimeAmount;
     uniform vec2 uNoiseSeed;
-
+${GLSL_AREA_PASS_UV_BOUNDS_UNIFORMS}
     varying vec2 vUv;
 
     float rawMaskSample(vec4 t) {
@@ -148,25 +154,32 @@ const FRAGMENT_SHADER = `
     }
 
     void main() {
+${GLSL_AREA_PASS_UV_BOUNDS_DISCARD_AND_LINE}
         vec4 ms = texture2D(maskMap, vUv);
         float m = rawMaskSample(ms);
         if (uMaskInvert > 0.5) m = 1.0 - m;
 
-        if (m < uMaskThreshold) discard;
+        if (m < uMaskThreshold) {
+            if (passLine * uPassBoundsHiStrength < 0.012) discard;
+            float a = passLine * uPassBoundsHiStrength;
+            gl_FragColor = vec4(uPassBoundsHiColor * a, a);
+            return;
+        }
 
         float denom = max(0.00001, 1.0 - uMaskThreshold);
         float mScaled = clamp((m - uMaskThreshold) / denom, 0.0, 1.0);
 
         vec3 bg = texture2D(map, vUv).rgb;
         float blend = clamp(mScaled * uTintStrength * uOpacity, 0.0, 1.0);
+        vec3 passB = uPassBoundsHiColor * passLine * uPassBoundsHiStrength;
 
         if (uBurnState < 1.5) {
-            gl_FragColor = vec4(mix(bg, uTintColor, blend), 1.0);
+            gl_FragColor = vec4(min(mix(bg, uTintColor, blend) + passB, vec3(1.0)), 1.0);
             return;
         }
 
         if (uBurnState < 2.5) {
-            gl_FragColor = vec4(bg, 1.0);
+            gl_FragColor = vec4(min(bg + passB, vec3(1.0)), 1.0);
             return;
         }
 
@@ -192,6 +205,7 @@ const FRAGMENT_SHADER = `
         baseCol = mix(baseCol, uCharColor, charAmt * uCharIntensity * blend);
         vec3 fireCol = mix(uFireMid, uFireHot, rim);
         baseCol = clamp(baseCol + fireCol * rim * uFireStrength * blend, 0.0, 1.0);
+        baseCol = min(baseCol + passB, vec3(1.0));
 
         gl_FragColor = vec4(baseCol, 1.0);
     }
@@ -508,6 +522,7 @@ class CharacterMaskTintEffect extends BaseEffect {
                 uNoiseTimeAmount: { value: this.burnNoiseTimeAmount },
                 uNoiseSeed: { value: new THREE.Vector2(0, 0) }
             };
+            mergeAreaPassUvBoundsUniforms(this.uniforms, config, THREE);
 
             this.syncUniformsFromConfig(config);
             if (this.uniforms.uNoiseSeed) {
@@ -605,8 +620,10 @@ class CharacterMaskTintEffect extends BaseEffect {
 
         const dissolveActive = this.burnEnabled && burnState >= 2.9;
         this._syncSkip = (this._syncSkip + 1) % 3;
+        const cfgPass = this.getConfig();
+        syncAreaPassUvBoundsUniforms(this.uniforms, cfgPass);
         if (dissolveActive || !this.burnEnabled || this._syncSkip === 0) {
-            this.syncUniformsFromConfig(this.getConfig());
+            this.syncUniformsFromConfig(cfgPass);
         } else if (this.parallax?.imageTexture && this.uniforms.map) {
             this.uniforms.map.value = this.parallax.imageTexture;
         }

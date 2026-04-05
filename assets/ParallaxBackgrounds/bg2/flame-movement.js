@@ -1,7 +1,12 @@
 // Flame Movement Effect - Area effect for bg2: pixel displacement in masked flame region
 // Uses bg2FlameMask.webp: black (0) = no effect, 1–255 = effect applied (warp existing flame pixels).
 
-import BaseEffect from '../../../js/base-effect.js';
+import BaseEffect, {
+    GLSL_AREA_PASS_UV_BOUNDS_DISCARD_AND_LINE,
+    GLSL_AREA_PASS_UV_BOUNDS_UNIFORMS,
+    mergeAreaPassUvBoundsUniforms,
+    syncAreaPassUvBoundsUniforms
+} from '../../../js/base-effect.js';
 import * as THREE from 'https://unpkg.com/three@0.172.0/build/three.module.js';
 
 const log = (...args) => {
@@ -36,10 +41,11 @@ const FRAGMENT_SHADER = `
     uniform float showBottomHighlight;
     uniform float heightScale;
     uniform float flameBaseY;
-
+${GLSL_AREA_PASS_UV_BOUNDS_UNIFORMS}
     varying vec2 vUv;
 
     void main() {
+${GLSL_AREA_PASS_UV_BOUNDS_DISCARD_AND_LINE}
         float maskValue = texture2D(maskMap, vUv).r;
 
         // Inner influence: strict mask area (fully affected)
@@ -58,7 +64,12 @@ const FRAGMENT_SHADER = `
         float ringAlpha = clamp(ring * ringAlphaMax, 0.0, ringAlphaMax); // semi‑transparent halo
 
         float alphaInfluence = innerInfluence + ringAlpha;
-        if (alphaInfluence <= 0.001) discard;
+        if (alphaInfluence <= 0.001) {
+            if (passLine * uPassBoundsHiStrength < 0.012) discard;
+            float a = passLine * uPassBoundsHiStrength;
+            gl_FragColor = vec4(uPassBoundsHiColor * a, a);
+            return;
+        }
 
         // Displacement is strongest in inner region, falls off in the ring
         float displacementInfluence = innerInfluence + ring * 0.25;
@@ -104,7 +115,8 @@ const FRAGMENT_SHADER = `
         vec3 bottomTint = vec3(0.2, 0.8, 1.0);
         float bottomMix = showBottomHighlight * inBottom * 0.4;
         color.rgb = mix(color.rgb, bottomTint, bottomMix);
-        gl_FragColor = vec4(color.rgb, alphaInfluence);
+        vec3 rgb = min(color.rgb + uPassBoundsHiColor * passLine * uPassBoundsHiStrength, vec3(1.0));
+        gl_FragColor = vec4(rgb, alphaInfluence);
     }
 `;
 
@@ -190,6 +202,7 @@ class FlameMovementEffect extends BaseEffect {
                 heightScale: { value: 1.0 },
                 flameBaseY: { value: config.flameBaseY ?? 0.82 }
             };
+            mergeAreaPassUvBoundsUniforms(this.uniforms, config, THREE);
 
             this.overlayMesh = this.createCoarseAreaEffectMesh(
                 FRAGMENT_SHADER,
@@ -220,6 +233,7 @@ class FlameMovementEffect extends BaseEffect {
         this.uniforms.time.value = this.time;
 
         const config = this.getConfig();
+        syncAreaPassUvBoundsUniforms(this.uniforms, config);
         const speed = config.speed ?? 3.0;
         const flickerAmount = config.flickerAmount ?? 0.4;
         const heightVariation = config.heightVariation ?? 0.06;

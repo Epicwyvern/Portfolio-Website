@@ -2,7 +2,12 @@
 // Single point source with warm yellow-orange halo, smooth falloff, optional flicker.
 // Uses same overlay pattern as lantern-glow but for one flame position.
 
-import BaseEffect from '../../../js/base-effect.js';
+import BaseEffect, {
+    GLSL_AREA_PASS_UV_BOUNDS_DISCARD_AND_LINE,
+    GLSL_AREA_PASS_UV_BOUNDS_UNIFORMS,
+    mergeAreaPassUvBoundsUniforms,
+    syncAreaPassUvBoundsUniforms
+} from '../../../js/base-effect.js';
 import * as THREE from 'https://unpkg.com/three@0.172.0/build/three.module.js';
 
 const log = (...args) => {
@@ -22,10 +27,11 @@ const FRAGMENT_SHADER = `
     uniform float uFlickerAmount;
     uniform float uFalloffPower;
     uniform vec2 uFlamePos;
-
+${GLSL_AREA_PASS_UV_BOUNDS_UNIFORMS}
     varying vec2 vUv;
 
     void main() {
+${GLSL_AREA_PASS_UV_BOUNDS_DISCARD_AND_LINE}
         vec2 delta = vUv - uFlamePos;
         delta.x /= max(0.001, uAspectRatio);
         float d = length(delta);
@@ -40,7 +46,8 @@ const FRAGMENT_SHADER = `
         );
         float alpha = t * uGlowStrength * uOpacity * flicker;
         alpha = max(0.0, min(1.0, alpha));
-        gl_FragColor = vec4(uGlowColor, alpha);
+        vec3 rgb = min(uGlowColor + uPassBoundsHiColor * passLine * uPassBoundsHiStrength, vec3(1.0));
+        gl_FragColor = vec4(rgb, alpha);
     }
 `;
 
@@ -57,6 +64,7 @@ class FlameGlowEffect extends BaseEffect {
         this.applyConfig(config);
 
         const uniforms = this.buildUniforms();
+        mergeAreaPassUvBoundsUniforms(uniforms, config, THREE);
         this.overlayMesh = this.createCoarseAreaEffectMesh(
             FRAGMENT_SHADER,
             uniforms,
@@ -118,6 +126,7 @@ class FlameGlowEffect extends BaseEffect {
         if (!this.isInitialized || !this.overlayMesh || !this.uniforms) return;
         this.time += deltaTime;
         this.uniforms.uTime.value = this.time;
+        syncAreaPassUvBoundsUniforms(this.uniforms, this.getConfig());
         this.uniforms.uFlamePos.value.set(this.positionX, this.positionY);
         this.syncWithParallaxMesh(this.overlayMesh);
         this.overlayMesh.position.z = 0.02;

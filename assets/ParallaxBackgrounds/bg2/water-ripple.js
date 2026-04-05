@@ -2,7 +2,15 @@
 // Uses mask (bg2WaterBW.png) for strength 0–255 and normal map for refraction
 // Uses coarse overlay geometry for performance (configurable overlaySegments)
 
-import BaseEffect from '../../../js/base-effect.js';
+import BaseEffect, {
+    GLSL_AREA_PASS_UV_BOUNDS_DISCARD_AND_LINE,
+    GLSL_AREA_PASS_UV_BOUNDS_UNIFORMS,
+    GLSL_AREA_PASS_UV_MINMAX_UNIFORMS,
+    mergeAreaPassUvBoundsUniforms,
+    mergePassUvBoundsMinMaxUniforms,
+    syncAreaPassUvBoundsUniforms,
+    syncPassUvBoundsMinMaxUniforms
+} from '../../../js/base-effect.js';
 import * as THREE from 'https://unpkg.com/three@0.172.0/build/three.module.js';
 import WaterParticleEmitter from './water-particle-emitter.js';
 
@@ -19,8 +27,11 @@ const DEFAULT_MAX_SPLOOSH_INSTANCES = 64;
 
 const STENCIL_PREPASS_FRAGMENT = `
     uniform sampler2D maskMap;
+` + GLSL_AREA_PASS_UV_MINMAX_UNIFORMS + `
     varying vec2 vUv;
     void main() {
+        if (vUv.x < uPassUvMin.x || vUv.x > uPassUvMax.x || vUv.y < uPassUvMin.y || vUv.y > uPassUvMax.y)
+            discard;
         if (texture2D(maskMap, vUv).r < 0.00392) discard;
         gl_FragColor = vec4(0.0);
     }
@@ -36,14 +47,22 @@ function buildFragmentShaderAmbientOnly() {
     uniform float rippleScale;
     uniform float rippleSpeed;
     uniform float refractionStrength;
+` + GLSL_AREA_PASS_UV_BOUNDS_UNIFORMS + `
     varying vec2 vUv;
     void main() {
+` + GLSL_AREA_PASS_UV_BOUNDS_DISCARD_AND_LINE + `
         float maskStrength = texture2D(maskMap, vUv).r;
-        if (maskStrength < 0.00392) discard;
+        if (maskStrength < 0.00392) {
+            if (passLine * uPassBoundsHiStrength < 0.012) discard;
+            gl_FragColor = vec4(uPassBoundsHiColor * passLine * uPassBoundsHiStrength, passLine * uPassBoundsHiStrength);
+            return;
+        }
         vec2 rippleUV = vUv * rippleScale + time * rippleSpeed;
         vec3 normal = normalize(texture2D(rippleNormal, rippleUV).xyz * 2.0 - 1.0);
         vec2 refractedUV = clamp(vUv + normal.xy * refractionStrength * maskStrength, 0.001, 0.999);
-        gl_FragColor = vec4(texture2D(map, refractedUV).rgb, maskStrength);
+        vec3 rgb = texture2D(map, refractedUV).rgb;
+        rgb = min(rgb + uPassBoundsHiColor * passLine * uPassBoundsHiStrength, vec3(1.0));
+        gl_FragColor = vec4(rgb, maskStrength);
     }
 `;
 }
@@ -62,11 +81,17 @@ function buildFragmentShaderWithDisturbance() {
     uniform float wakeTint;
     uniform float splooshTint;
 
+` + GLSL_AREA_PASS_UV_BOUNDS_UNIFORMS + `
     varying vec2 vUv;
 
     void main() {
+` + GLSL_AREA_PASS_UV_BOUNDS_DISCARD_AND_LINE + `
         float maskStrength = texture2D(maskMap, vUv).r;
-        if (maskStrength < 0.00392) discard;
+        if (maskStrength < 0.00392) {
+            if (passLine * uPassBoundsHiStrength < 0.012) discard;
+            gl_FragColor = vec4(uPassBoundsHiColor * passLine * uPassBoundsHiStrength, passLine * uPassBoundsHiStrength);
+            return;
+        }
 
         // AMBIENT RIPPLE
         vec2 rippleUV = vUv * rippleScale + time * rippleSpeed;
@@ -84,6 +109,7 @@ function buildFragmentShaderWithDisturbance() {
         float distMag = length(disturbance);
         float tintAmount = distMag * (wakeTint + splooshTint) * 0.5;
         vec3 tintedColor = bgColor.rgb * (1.0 - tintAmount * 0.6) + vec3(0.7, 0.85, 1.0) * tintAmount * 0.15;
+        tintedColor = min(tintedColor + uPassBoundsHiColor * passLine * uPassBoundsHiStrength, vec3(1.0));
 
         gl_FragColor = vec4(tintedColor, maskStrength);
     }
@@ -132,6 +158,7 @@ function buildSimulationFragmentShader(maxWake, maxSploosh) {
     return `
     uniform sampler2D uPrevState;
     uniform sampler2D uMaskMap;
+` + GLSL_AREA_PASS_UV_MINMAX_UNIFORMS + `
     uniform vec2 uResolution;
     uniform float uTime;
     uniform float uDiffusionStrength;
@@ -239,6 +266,10 @@ ${splooshDecls.join('\n')}
     }
 
     void main() {
+        if (vUv.x < uPassUvMin.x || vUv.x > uPassUvMax.x || vUv.y < uPassUvMin.y || vUv.y > uPassUvMax.y) {
+            gl_FragColor = vec4(0.0, 0.0, 0.0, 0.0);
+            return;
+        }
         float maskStrength = texture2D(uMaskMap, vUv).r;
         if (maskStrength < 0.00392) {
             gl_FragColor = vec4(0.0, 0.0, 0.0, 0.0);
@@ -495,6 +526,7 @@ class WaterRippleEffect extends BaseEffect {
                 rippleSpeed: { value: rippleSpeed },
                 refractionStrength: { value: refractionStrength }
             };
+            mergeAreaPassUvBoundsUniforms(effectUniforms, config, THREE);
 
             const fragmentShader = this.simulationEnabled
                 ? buildFragmentShaderWithDisturbance()
@@ -517,6 +549,7 @@ class WaterRippleEffect extends BaseEffect {
             // Share geometry with main overlay (no clone) — both meshes reference the same BufferGeometry
             const prepassGeometry = this.overlayMesh.geometry;
             const prepassUniforms = { maskMap: { value: maskTexture } };
+            mergePassUvBoundsMinMaxUniforms(prepassUniforms, config, THREE);
             const prepassMaterial = new THREE.ShaderMaterial({
                 vertexShader: this.parallax.getDisplacementVertexShader(),
                 fragmentShader: STENCIL_PREPASS_FRAGMENT,
@@ -633,6 +666,7 @@ class WaterRippleEffect extends BaseEffect {
                 ])
             )
         };
+        mergePassUvBoundsMinMaxUniforms(this.simUniforms, this.getConfig(), THREE);
         const simVertexShader = `
             varying vec2 vUv;
             void main() {
@@ -709,6 +743,13 @@ class WaterRippleEffect extends BaseEffect {
         const frameDelta = Number.isFinite(deltaTime) && deltaTime > 0 ? deltaTime : 0.016;
         this.time += frameDelta;
         if (this.uniforms?.time) this.uniforms.time.value = this.time;
+
+        const wcfg = this.getConfig();
+        if (this.uniforms) syncAreaPassUvBoundsUniforms(this.uniforms, wcfg);
+        if (this.stencilPrepassMesh?.material?.uniforms) {
+            syncPassUvBoundsMinMaxUniforms(this.stencilPrepassMesh.material.uniforms, wcfg);
+        }
+        if (this.simUniforms) syncPassUvBoundsMinMaxUniforms(this.simUniforms, wcfg);
 
         // Update mouse interaction
         this.updateMouseInteraction(frameDelta);
