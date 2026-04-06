@@ -15,7 +15,16 @@ const log = (...args) => {
     }
 };
 
+const TWO_PI = 6.2831853;
+
+function sinStableRad(rad) {
+    return Math.sin(((rad / TWO_PI) % 1 + 1) % 1 * TWO_PI);
+}
+
 const FRAGMENT_SHADER = `
+    precision highp float;
+    precision highp int;
+
     uniform sampler2D map;
     uniform sampler2D maskMap;
     uniform float time;
@@ -79,25 +88,25 @@ ${GLSL_AREA_PASS_UV_BOUNDS_DISCARD_AND_LINE}
         float bottomMul = mix(1.0, 1.0 - bottomDampStrength, bottomFactor);
 
         float t = time * speed;
-        float pi = 6.2831853;
+        float twoPi = 6.2831853;
         float tipFactor = smoothstep(tipStart, tipEnd, vUv.y);
         float tipMul = 1.0 + tipAccent * tipFactor;
 
         // Temporal banded randomness (no grain): varies mainly with height and time
         float bandPhase = vUv.y * 7.0 + time * 0.8;
-        float n = sin(bandPhase) * 0.5 + 0.5;
+        float n = sin(fract(bandPhase / twoPi) * twoPi) * 0.5 + 0.5;
         float randScale = 1.0 + randomnessScale * (n - 0.5);
 
-        float p1 = (vUv.x * primaryScale + vUv.y * primaryScale * 0.7 + t) * randScale;
-        float p2 = (vUv.x * secondaryScale * 1.3 - vUv.y * secondaryScale * 0.5 + t * 0.83 + 1.5) * (1.0 + randomnessScale * 0.3);
-        float p3 = ((vUv.x - vUv.y) * primaryScale * 0.6 + t * 1.1 + 3.0) * (1.0 - randomnessScale * 0.2);
+        float p1 = fract((vUv.x * primaryScale + vUv.y * primaryScale * 0.7 + t) * randScale);
+        float p2 = fract((vUv.x * secondaryScale * 1.3 - vUv.y * secondaryScale * 0.5 + t * 0.83 + 1.5) * (1.0 + randomnessScale * 0.3));
+        float p3 = fract(((vUv.x - vUv.y) * primaryScale * 0.6 + t * 1.1 + 3.0) * (1.0 - randomnessScale * 0.2));
 
-        float dx = sin(p1 * pi) * 0.5 + sin(p2 * pi) * 0.35 + sin(p3 * pi) * 0.15;
-        float dy = sin(p1 * pi + 0.7) * 0.5 + sin(p2 * pi + 1.2) * 0.35 + sin(p3 * pi + 0.3) * 0.15;
+        float dx = sin(p1 * twoPi) * 0.5 + sin(p2 * twoPi) * 0.35 + sin(p3 * twoPi) * 0.15;
+        float dy = sin(p1 * twoPi + 0.7) * 0.5 + sin(p2 * twoPi + 1.2) * 0.35 + sin(p3 * twoPi + 0.3) * 0.15;
 
-        float flicker = 1.0 + (flickerAmount * (sin(t * 4.0) * 0.5 + 0.5));
+        float flicker = 1.0 + (flickerAmount * (sin(fract(t * 4.0 / twoPi) * twoPi) * 0.5 + 0.5));
         vec2 displacement = vec2(
-            (dx * horizontalSway + verticalBias * sin(t * 2.0)) * displacementStrength * flicker * displacementInfluence * tipMul * bottomMul,
+            (dx * horizontalSway + verticalBias * sin(fract(t * 2.0 / twoPi) * twoPi)) * displacementStrength * flicker * displacementInfluence * tipMul * bottomMul,
             (dy + verticalBias) * displacementStrength * flicker * displacementInfluence * tipMul * bottomMul
         );
 
@@ -238,8 +247,8 @@ class FlameMovementEffect extends BaseEffect {
         const flickerAmount = config.flickerAmount ?? 0.4;
         const heightVariation = config.heightVariation ?? 0.06;
         const t = this.time * speed;
-        const flicker = 1.0 + flickerAmount * (Math.sin(t * 4.0) * 0.5 + 0.5);
-        const heightScale = 1.0 + heightVariation * Math.sin(t * 4.0);
+        const flicker = 1.0 + flickerAmount * (sinStableRad(t * 4.0) * 0.5 + 0.5);
+        const heightScale = 1.0 + heightVariation * sinStableRad(t * 4.0);
         if (!this.parallax.flameState) this.parallax.flameState = {};
         this.parallax.flameState.flicker = flicker;
         this.parallax.flameState.heightScale = heightScale;

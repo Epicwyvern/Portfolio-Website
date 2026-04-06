@@ -120,6 +120,17 @@ class SimpleParallax {
 
         // Frame timing for time-based effects
         this.lastFrameTime = performance.now();
+        /** After tab/window refocus, first rAF often carries a huge dt; cap that step for effects (see animate). */
+        this._clampSimulationDeltaNextFrame = false;
+        this._onVisResumeClock = () => {
+            if (!document.hidden) this._clampSimulationDeltaNextFrame = true;
+        };
+        this._onWindowFocusResumeClock = () => {
+            this._clampSimulationDeltaNextFrame = true;
+        };
+        document.addEventListener('visibilitychange', this._onVisResumeClock);
+        window.addEventListener('focus', this._onWindowFocusResumeClock);
+
         this._inputBounds = {
             left: 0,
             top: 0,
@@ -1274,10 +1285,21 @@ class SimpleParallax {
         requestAnimationFrame(() => this.animate());
 
         const now = performance.now();
-        let deltaTime = (now - this.lastFrameTime) / 1000;
+        let rawDeltaSec = (now - this.lastFrameTime) / 1000;
+        if (this._clampSimulationDeltaNextFrame) {
+            if (rawDeltaSec > 0.08) {
+                rawDeltaSec = 1 / 60;
+            }
+            this._clampSimulationDeltaNextFrame = false;
+        }
+        let deltaTime = rawDeltaSec;
         this.lastFrameTime = now;
-        if (deltaTime > 0.1) {
-            deltaTime = 0.1;
+        // Cap long pauses (sleep / debugger) so springs and input don't explode, but do NOT use
+        // a tiny cap (e.g. 0.1): when rAF is throttled to ~1 Hz, 0.1s per tick undershoots real
+        // elapsed time ~10× and makes shader-driven motion look strobed / jittery (foliage, flame).
+        const maxFrameDeltaSec = 2.0;
+        if (deltaTime > maxFrameDeltaSec) {
+            deltaTime = maxFrameDeltaSec;
         }
 
         // Avoid per-frame effect updates/renders when tab isn't visible.
@@ -1617,7 +1639,10 @@ class SimpleParallax {
     // Method to cleanup resources
     destroy() {
         debugLog('SimpleParallax: Destroying parallax instance');
-        
+
+        document.removeEventListener('visibilitychange', this._onVisResumeClock);
+        window.removeEventListener('focus', this._onWindowFocusResumeClock);
+
         // Cleanup effects first
         if (this.effectManager) {
             this.effectManager.cleanup();

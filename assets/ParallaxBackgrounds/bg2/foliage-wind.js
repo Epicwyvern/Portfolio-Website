@@ -21,6 +21,9 @@ const log = (...args) => {
 const MAX_RUSTLE_INSTANCES = 6;
 
 const FRAGMENT_SHADER = `
+    precision highp float;
+    precision highp int;
+
     uniform sampler2D map;
     uniform sampler2D maskMap;
     uniform float time;
@@ -115,10 +118,11 @@ ${GLSL_AREA_PASS_UV_BOUNDS_DISCARD_AND_LINE}
         float effectiveGust = gustStrength * env;
 
         float t = time * windSpeed;
-        float phaseA = sin((vUv.y * primaryScale + t) * 6.2831853);
-        float phaseB = sin((vUv.x * secondaryScale - t * 0.73) * 6.2831853 + phaseA * 0.45);
-        float gustA = sin(((vUv.x + vUv.y) * gustScale + t * 1.7) * 6.2831853);
-        float gustB = sin((vUv.x * (gustScale * 0.7) - vUv.y * (gustScale * 1.3) + t * 1.1) * 6.2831853);
+        // fract(...) keeps sin arguments in [0,1) cycle space so float32 stays stable after long runtimes
+        float phaseA = sin(fract(vUv.y * primaryScale + t) * 6.2831853);
+        float phaseB = sin(fract(vUv.x * secondaryScale - t * 0.73) * 6.2831853 + phaseA * 0.45);
+        float gustA = sin(fract((vUv.x + vUv.y) * gustScale + t * 1.7) * 6.2831853);
+        float gustB = sin(fract(vUv.x * (gustScale * 0.7) - vUv.y * (gustScale * 1.3) + t * 1.1) * 6.2831853);
 
         float waveMag = (phaseA * 0.65 + phaseB * 0.35) * effectiveStrength
                       + (gustA * 0.6 + gustB * 0.4) * effectiveGust;
@@ -163,7 +167,7 @@ ${GLSL_AREA_PASS_UV_BOUNDS_DISCARD_AND_LINE}
         detailLuma = clamp(detailLuma, -0.08, 0.08);
         vec3 sharpened = clamp(displacedColor.rgb + vec3(detailLuma * effectiveSharpness), 0.0, 1.0);
 
-        float shimmer = sin((vUv.x * 18.0 + vUv.y * 11.0 + t * 2.2) * 6.2831853);
+        float shimmer = sin(fract(vUv.x * 18.0 + vUv.y * 11.0 + t * 2.2) * 6.2831853);
         float blendAmount = influence;
         vec3 mixedColor = mix(baseColor.rgb, sharpened, blendAmount);
         vec3 color = mixedColor * (1.0 + shimmer * shimmerStrength * influence * env);
@@ -183,6 +187,11 @@ function randRange(min, max) {
 function smoothstepJS(t) {
     t = Math.max(0, Math.min(1, t));
     return t * t * (3 - 2 * t);
+}
+
+/** Same cycle-space reduction as the fragment shader (stable Math.sin after long runtimes). */
+function fract01(x) {
+    return x - Math.floor(x);
 }
 
 class FoliageWindEffect extends BaseEffect {
@@ -427,10 +436,10 @@ class FoliageWindEffect extends BaseEffect {
         const windStrength = (config.windStrength ?? 0.0025) * this._envValue;
         const gustStrength = (config.gustStrength ?? 0.001) * this._envValue;
 
-        const phaseA = Math.sin((uv.y * primaryScale + t) * 6.2831853);
-        const phaseB = Math.sin((uv.x * secondaryScale - t * 0.73) * 6.2831853 + phaseA * 0.45);
-        const gustA = Math.sin(((uv.x + uv.y) * gustScale + t * 1.7) * 6.2831853);
-        const gustB = Math.sin((uv.x * (gustScale * 0.7) - uv.y * (gustScale * 1.3) + t * 1.1) * 6.2831853);
+        const phaseA = Math.sin(fract01(uv.y * primaryScale + t) * 6.2831853);
+        const phaseB = Math.sin(fract01(uv.x * secondaryScale - t * 0.73) * 6.2831853 + phaseA * 0.45);
+        const gustA = Math.sin(fract01((uv.x + uv.y) * gustScale + t * 1.7) * 6.2831853);
+        const gustB = Math.sin(fract01(uv.x * (gustScale * 0.7) - uv.y * (gustScale * 1.3) + t * 1.1) * 6.2831853);
 
         const waveMag = (phaseA * 0.65 + phaseB * 0.35) * windStrength
                       + (gustA * 0.6 + gustB * 0.4) * gustStrength;
@@ -973,7 +982,7 @@ class FoliageWindEffect extends BaseEffect {
                     depthWrite: false
                 }
             );
-            // After character-mask-tint (renderOrder 1): tint uses depthTest false and samples undistorted UVs,
+            // After character-burn (renderOrder 1): mask overlay may use depthTest false and undistorted UVs,
             // so if it draws last it replaces wind with a static map in masked regions and looks misaligned at edges.
             this.overlayMesh.renderOrder = 2;
             this.syncWithParallaxMesh(this.overlayMesh, { overlayZ: PARALLAX_COARSE_OVERLAY_Z });

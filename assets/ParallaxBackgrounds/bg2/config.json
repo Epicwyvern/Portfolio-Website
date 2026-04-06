@@ -524,7 +524,7 @@
         }
       }
     },
-    "characterMaskTint": {
+    "characterBurn": {
       "passUvBounds": {
         "minX": 0,
         "minY": 0.16,
@@ -538,13 +538,12 @@
         "color": "0x44ff99"
       },
       "maskPath": "assets/bg2CharacterMask.webp",
-      "maskChannel": "luminance",
+      "maskChannel": "alpha",
       "maskIgnoreBelow": 0,
       "maskInvert": false,
       "overlaySegments": 128,
       "useDepthTest": true,
-      "tintColor": "0x916D55",
-      "tintStrength": 0.85,
+      "blendStrength": 0.85,
       "opacity": 1.0,
       "burn": {
         "enabled": true,

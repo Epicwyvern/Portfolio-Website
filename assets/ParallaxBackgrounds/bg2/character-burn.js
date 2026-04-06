@@ -1,6 +1,6 @@
-// Character mask tint — area effect for bg2: tints the background where a mask is non-zero.
-// Optional burn-out / burn-in: noise-threshold dissolve with char + emissive rim; only affects
-// pixels that pass the mask threshold (black / ignored regions are discarded, no burn).
+// Character burn — area effect for bg2: composites colored mask RGB over the background
+// (mask channel + threshold + invert). Non-alpha channels multiply coverage by alpha; RGB is premultiplied by a.
+// Burn-out / burn-in: noise-threshold dissolve with char + emissive rim on masked pixels only.
 // Uses the same coarse displaced geometry as water / foliage so the overlay tracks parallax.
 
 import BaseEffect, {
@@ -24,7 +24,7 @@ const log = (...args) => {
  * @param {unknown} tp
  * @returns {Array<{x:number,y:number}>|null}
  */
-export function getCharacterMaskBurnTriggerPolygonCorners(tp) {
+export function getCharacterBurnTriggerPolygonCorners(tp) {
     if (!tp || typeof tp !== 'object') return null;
     const c = /** @type {{ corners?: unknown }} */ (tp).corners;
     if (!Array.isArray(c) || c.length < 3) return null;
@@ -41,14 +41,14 @@ export function getCharacterMaskBurnTriggerPolygonCorners(tp) {
 }
 
 /** @param {unknown} tp @returns {boolean} */
-export function characterMaskBurnTriggerPolygonHasBounds(tp) {
-    return getCharacterMaskBurnTriggerPolygonCorners(tp) != null;
+export function characterBurnTriggerPolygonHasBounds(tp) {
+    return getCharacterBurnTriggerPolygonCorners(tp) != null;
 }
 
 /** True when double-click should be limited to UV polygon (enabled + valid corners). */
-export function characterMaskBurnTriggerPolygonIsActive(tp) {
+export function characterBurnTriggerPolygonIsActive(tp) {
     if (!tp || typeof tp !== 'object' || /** @type {{ enabled?: boolean }} */ (tp).enabled === false) return false;
-    return characterMaskBurnTriggerPolygonHasBounds(tp);
+    return characterBurnTriggerPolygonHasBounds(tp);
 }
 
 /** Point-in-polygon (ray cast); works for simple polygons, convex or concave. */
@@ -72,7 +72,7 @@ export function pointInBurnTriggerPolygonUV(u, v, poly) {
 }
 
 /** @param {string} ch @returns {number} 0 alpha, 1 red, 2 max(r,a), 3 luminance */
-export function characterMaskTintChannelToFloat(ch) {
+export function characterBurnMaskChannelToFloat(ch) {
     const c = (ch || 'alpha').toLowerCase();
     if (c === 'red' || c === 'r') return 1;
     if (c === 'max' || c === 'maxRa') return 2;
@@ -83,8 +83,7 @@ export function characterMaskTintChannelToFloat(ch) {
 const FRAGMENT_SHADER = `
     uniform sampler2D map;
     uniform sampler2D maskMap;
-    uniform vec3 uTintColor;
-    uniform float uTintStrength;
+    uniform float uBlendStrength;
     uniform float uOpacity;
     uniform float uMaskSource;
     uniform float uMaskThreshold;
@@ -158,6 +157,10 @@ ${GLSL_AREA_PASS_UV_BOUNDS_DISCARD_AND_LINE}
         vec4 ms = texture2D(maskMap, vUv);
         float m = rawMaskSample(ms);
         if (uMaskInvert > 0.5) m = 1.0 - m;
+        // Non-alpha channel: silhouette is usually in alpha; don't let RGB (e.g. luma) paint where a=0.
+        if (uMaskSource > 0.5) {
+            m *= ms.a;
+        }
 
         if (m < uMaskThreshold) {
             if (passLine * uPassBoundsHiStrength < 0.012) discard;
@@ -170,11 +173,12 @@ ${GLSL_AREA_PASS_UV_BOUNDS_DISCARD_AND_LINE}
         float mScaled = clamp((m - uMaskThreshold) / denom, 0.0, 1.0);
 
         vec3 bg = texture2D(map, vUv).rgb;
-        float blend = clamp(mScaled * uTintStrength * uOpacity, 0.0, 1.0);
+        vec3 maskRgb = uMaskSource > 0.5 ? ms.rgb * ms.a : ms.rgb;
+        float blend = clamp(mScaled * uBlendStrength * uOpacity, 0.0, 1.0);
         vec3 passB = uPassBoundsHiColor * passLine * uPassBoundsHiStrength;
 
         if (uBurnState < 1.5) {
-            gl_FragColor = vec4(min(mix(bg, uTintColor, blend) + passB, vec3(1.0)), 1.0);
+            gl_FragColor = vec4(min(mix(bg, maskRgb, blend) + passB, vec3(1.0)), 1.0);
             return;
         }
 
@@ -201,7 +205,7 @@ ${GLSL_AREA_PASS_UV_BOUNDS_DISCARD_AND_LINE}
         charAmt = (1.0 - smoothstep(thresh + 0.0001, thresh + uCharWidth, n))
             * smoothstep(thresh - edgeS, thresh + uCharWidth * 0.5, n);
 
-        vec3 baseCol = mix(bg, uTintColor, blend * keep);
+        vec3 baseCol = mix(bg, maskRgb, blend * keep);
         baseCol = mix(baseCol, uCharColor, charAmt * uCharIntensity * blend);
         vec3 fireCol = mix(uFireMid, uFireHot, rim);
         baseCol = clamp(baseCol + fireCol * rim * uFireStrength * blend, 0.0, 1.0);
@@ -211,7 +215,7 @@ ${GLSL_AREA_PASS_UV_BOUNDS_DISCARD_AND_LINE}
     }
 `;
 
-class CharacterMaskTintEffect extends BaseEffect {
+class CharacterBurnEffect extends BaseEffect {
     constructor(scene, camera, renderer, parallaxInstance) {
         super(scene, camera, renderer, parallaxInstance);
         this.effectType = 'area';
@@ -231,7 +235,11 @@ class CharacterMaskTintEffect extends BaseEffect {
     }
 
     getConfig() {
-        return this.parallax?.config?.effects?.characterMaskTint ?? {};
+        const e = this.parallax?.config?.effects;
+        if (!e || typeof e !== 'object') return {};
+        return /** @type {Record<string, unknown>} */ (e).characterBurn ??
+            /** @type {Record<string, unknown>} */ (e).characterMaskTint ??
+            {};
     }
 
     getBurnConfig() {
@@ -250,8 +258,9 @@ class CharacterMaskTintEffect extends BaseEffect {
 
     applyConfig(config) {
         const c = config ?? this.getConfig();
-        this.tintColor = this.parseColor(c.tintColor ?? '0x88ccff');
-        this.tintStrength = c.tintStrength ?? 0.85;
+        const bs = c.blendStrength ?? c.tintStrength;
+        this.blendStrength =
+            bs != null && Number.isFinite(Number(bs)) ? Number(bs) : 0.85;
         this.opacity = c.opacity ?? 1.0;
         this.useDepthTest = c.useDepthTest === true;
         this.overlaySegments = c.overlaySegments ?? 128;
@@ -295,10 +304,9 @@ class CharacterMaskTintEffect extends BaseEffect {
     syncUniformsFromConfig(config) {
         if (!this.uniforms) return;
         this.applyConfig(config);
-        this.uniforms.uTintColor.value.copy(this.tintColor);
-        this.uniforms.uTintStrength.value = this.tintStrength;
+        this.uniforms.uBlendStrength.value = this.blendStrength;
         this.uniforms.uOpacity.value = this.opacity;
-        this.uniforms.uMaskSource.value = characterMaskTintChannelToFloat(this.maskChannel);
+        this.uniforms.uMaskSource.value = characterBurnMaskChannelToFloat(this.maskChannel);
         this.uniforms.uMaskThreshold.value = this.getMaskThresholdNormalized();
         this.uniforms.uMaskInvert.value = this.maskInvert ? 1.0 : 0.0;
 
@@ -353,7 +361,7 @@ class CharacterMaskTintEffect extends BaseEffect {
         );
     }
 
-    /** Start animating toward burnt-out (tint gone on mask; shows raw bg in shader). */
+    /** Start animating toward burnt-out (mask composite gone; shows raw bg in shader). */
     triggerBurnOut() {
         if (!this.burnEnabled) return;
         if (this._isBurnAnimating()) {
@@ -370,7 +378,7 @@ class CharacterMaskTintEffect extends BaseEffect {
         this._burnQueuedTarget = null;
     }
 
-    /** Start animating back to full tint on mask. */
+    /** Start animating back to full mask composite on the silhouette. */
     triggerBurnIn() {
         if (!this.burnEnabled) return;
         if (this._isBurnAnimating()) {
@@ -387,7 +395,7 @@ class CharacterMaskTintEffect extends BaseEffect {
         this._burnQueuedTarget = null;
     }
 
-    /** Toggle between full tint and burnt out (for testing / simple UX). */
+    /** Toggle between full mask composite and burnt out (for testing / simple UX). */
     toggleBurn() {
         if (!this.burnEnabled) return;
         if (this._isBurnAnimating()) {
@@ -424,8 +432,8 @@ class CharacterMaskTintEffect extends BaseEffect {
 
     _uvInsideBurnTriggerPolygon(uv) {
         const tp = this.getBurnConfig().interaction?.triggerPolygon;
-        if (!characterMaskBurnTriggerPolygonIsActive(tp)) return true;
-        const corners = getCharacterMaskBurnTriggerPolygonCorners(tp);
+        if (!characterBurnTriggerPolygonIsActive(tp)) return true;
+        const corners = getCharacterBurnTriggerPolygonCorners(tp);
         if (!corners) return true;
         return pointInBurnTriggerPolygonUV(uv.x, uv.y, corners);
     }
@@ -438,7 +446,7 @@ class CharacterMaskTintEffect extends BaseEffect {
         this._burnDblClickHandler = (e) => {
             if (!this.isInitialized || !this.burnEnabled) return;
             const tp = this.getBurnConfig().interaction?.triggerPolygon;
-            if (characterMaskBurnTriggerPolygonIsActive(tp)) {
+            if (characterBurnTriggerPolygonIsActive(tp)) {
                 const uv = this._getUvFromPointerEvent(e);
                 if (!uv || !this._uvInsideBurnTriggerPolygon(uv)) return;
             }
@@ -472,10 +480,10 @@ class CharacterMaskTintEffect extends BaseEffect {
                     return await this.loadTexture(p);
                 } catch (e) {
                     if (i === paths.length - 1) throw e;
-                    log(`CharacterMaskTintEffect: Fallback from ${p}`);
+                    log(`CharacterBurnEffect: Fallback from ${p}`);
                 }
             }
-            throw new Error('CharacterMaskTintEffect: No mask path worked');
+            throw new Error('CharacterBurnEffect: No mask path worked');
         };
 
         try {
@@ -497,10 +505,9 @@ class CharacterMaskTintEffect extends BaseEffect {
             this.uniforms = {
                 map: { value: this.parallax.imageTexture },
                 maskMap: { value: maskTexture },
-                uTintColor: { value: this.tintColor.clone() },
-                uTintStrength: { value: this.tintStrength },
+                uBlendStrength: { value: this.blendStrength },
                 uOpacity: { value: this.opacity },
-                uMaskSource: { value: characterMaskTintChannelToFloat(this.maskChannel) },
+                uMaskSource: { value: characterBurnMaskChannelToFloat(this.maskChannel) },
                 uMaskThreshold: { value: this.getMaskThresholdNormalized() },
                 uMaskInvert: { value: this.maskInvert ? 1.0 : 0.0 },
 
@@ -558,9 +565,11 @@ class CharacterMaskTintEffect extends BaseEffect {
             this._attachBurnInteraction();
 
             this.isInitialized = true;
-            log(`CharacterMaskTintEffect: Initialized (maskChannel: ${this.maskChannel}, burn: ${this.burnEnabled})`);
+            log(
+                `CharacterBurnEffect: Initialized (maskChannel: ${this.maskChannel}, burn: ${this.burnEnabled})`
+            );
         } catch (error) {
-            console.error('CharacterMaskTintEffect: init failed:', error);
+            console.error('CharacterBurnEffect: init failed:', error);
             throw error;
         }
     }
@@ -661,4 +670,4 @@ class CharacterMaskTintEffect extends BaseEffect {
     }
 }
 
-export default CharacterMaskTintEffect;
+export default CharacterBurnEffect;

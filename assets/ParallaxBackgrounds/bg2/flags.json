@@ -53,7 +53,7 @@
         "flame-glow": {
             "enabled": true
         },
-        "character-mask-tint": {
+        "character-burn": {
             "enabled": true
         },
         "potion-bubbles": {
