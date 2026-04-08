@@ -123,13 +123,21 @@ class SimpleParallax {
         /** After tab/window refocus, first rAF often carries a huge dt; cap that step for effects (see animate). */
         this._clampSimulationDeltaNextFrame = false;
         this._onVisResumeClock = () => {
-            if (!document.hidden) this._clampSimulationDeltaNextFrame = true;
+            if (document.hidden) return;
+            this.lastFrameTime = performance.now();
+            this._clampSimulationDeltaNextFrame = true;
         };
         this._onWindowFocusResumeClock = () => {
+            this.lastFrameTime = performance.now();
+            this._clampSimulationDeltaNextFrame = true;
+        };
+        this._onWindowBlurResumeClock = () => {
+            this.lastFrameTime = performance.now();
             this._clampSimulationDeltaNextFrame = true;
         };
         document.addEventListener('visibilitychange', this._onVisResumeClock);
         window.addEventListener('focus', this._onWindowFocusResumeClock);
+        window.addEventListener('blur', this._onWindowBlurResumeClock);
 
         this._inputBounds = {
             left: 0,
@@ -498,6 +506,13 @@ class SimpleParallax {
                 cbs.forEach(fn => { try { fn(name, !!value); } catch (e) { console.warn('Lantern change callback error:', e); } });
             }
         }
+        if (path.startsWith('effects.sprites.individual.')) {
+            const name = keys[keys.length - 1];
+            const cbs = this._spritesIndividualChangeCallbacks;
+            if (cbs && cbs.length) {
+                cbs.forEach(fn => { try { fn(name, !!value); } catch (e) { console.warn('Sprites change callback error:', e); } });
+            }
+        }
     }
 
     /** Register callback for individual lantern enable/disable. Callback receives (lanternName, isNowEnabled). */
@@ -507,6 +522,16 @@ class SimpleParallax {
         return () => {
             const i = this._lanternIndividualChangeCallbacks.indexOf(callback);
             if (i >= 0) this._lanternIndividualChangeCallbacks.splice(i, 1);
+        };
+    }
+
+    /** Register callback for individual sprite cluster enable/disable. Callback receives (clusterName, isNowEnabled). */
+    onSpritesIndividualChange(callback) {
+        if (!this._spritesIndividualChangeCallbacks) this._spritesIndividualChangeCallbacks = [];
+        this._spritesIndividualChangeCallbacks.push(callback);
+        return () => {
+            const i = this._spritesIndividualChangeCallbacks.indexOf(callback);
+            if (i >= 0) this._spritesIndividualChangeCallbacks.splice(i, 1);
         };
     }
 
@@ -1285,27 +1310,32 @@ class SimpleParallax {
         requestAnimationFrame(() => this.animate());
 
         const now = performance.now();
-        let rawDeltaSec = (now - this.lastFrameTime) / 1000;
-        if (this._clampSimulationDeltaNextFrame) {
-            if (rawDeltaSec > 0.08) {
-                rawDeltaSec = 1 / 60;
-            }
-            this._clampSimulationDeltaNextFrame = false;
-        }
-        let deltaTime = rawDeltaSec;
+        const rawDeltaSec = (now - this.lastFrameTime) / 1000;
         this.lastFrameTime = now;
+
+        const hidden = document.hidden;
+
+        // While hidden, rAF can still run throttled. Do not consume _clampSimulationDeltaNextFrame
+        // here — if we did, the first visible frame after refocus would see an unclamped huge dt.
+        if (hidden) {
+            return;
+        }
+
         // Cap long pauses (sleep / debugger) so springs and input don't explode, but do NOT use
         // a tiny cap (e.g. 0.1): when rAF is throttled to ~1 Hz, 0.1s per tick undershoots real
         // elapsed time ~10× and makes shader-driven motion look strobed / jittery (foliage, flame).
         const maxFrameDeltaSec = 2.0;
-        if (deltaTime > maxFrameDeltaSec) {
-            deltaTime = maxFrameDeltaSec;
+        let deltaTime = Math.min(Math.max(rawDeltaSec, 0), maxFrameDeltaSec);
+
+        if (this._clampSimulationDeltaNextFrame) {
+            if (rawDeltaSec > 0.08) {
+                deltaTime = Math.min(deltaTime, 1 / 60);
+            }
+            this._clampSimulationDeltaNextFrame = false;
         }
 
-        // Avoid per-frame effect updates/renders when tab isn't visible.
-        if (document.hidden) {
-            return;
-        }
+        const pageFocused = typeof document.hasFocus !== 'function' || document.hasFocus();
+        const effectDt = pageFocused ? deltaTime : 0;
 
         // Update auto-movement
         this.updateAutoMovement();
@@ -1354,9 +1384,10 @@ class SimpleParallax {
             this.uniforms.mouseDelta.value.set(this.targetX, -this.targetY);
         }
 
-        // Update effects
+        // Update effects (freeze time-based shaders when the window is unfocused but the tab is still
+        // "visible": rAF is throttled and dt spikes; document.hidden can stay false — see H7 logs.)
         if (this.effectManager && this.effectManager.isReady()) {
-            this.effectManager.update(deltaTime);
+            this.effectManager.update(effectDt);
         }
 
         // Pre-pass: effects that render to RT (e.g. vignette at half-res)
@@ -1642,6 +1673,7 @@ class SimpleParallax {
 
         document.removeEventListener('visibilitychange', this._onVisResumeClock);
         window.removeEventListener('focus', this._onWindowFocusResumeClock);
+        window.removeEventListener('blur', this._onWindowBlurResumeClock);
 
         // Cleanup effects first
         if (this.effectManager) {

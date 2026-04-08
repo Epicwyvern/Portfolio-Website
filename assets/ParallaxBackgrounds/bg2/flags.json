@@ -64,6 +64,12 @@
         },
         "candle-flame-screen": {
             "enabled": true
+        },
+        "sprites": {
+            "enabled": true,
+            "individual": {
+                "TreeSpirits": true
+            }
         }
     }
 }

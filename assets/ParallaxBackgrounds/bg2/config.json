@@ -348,6 +348,67 @@
         }
       ]
     },
+    "sprites": {
+      "meshZOffset": 0.02,
+      "depthTest": false,
+      "depthWrite": false,
+      "defaults": {
+        "blendMode": "NoBlending",
+        "alphaTest": 0.01,
+        "spawnPerSecond": { "min": 0.4, "max": 0.8},
+        "lifetimeSeconds": { "min": 4.5, "max": 20},
+        "baseScale": { "min": 0.05, "max": 0.08},
+        "speedUVPerSec": { "min": 0.005, "max": 0.01},
+        "depthSpeed": { "min": -0.011, "max": 0.011 },
+        "depthRange": { "min": -0.028, "max": 0.038 },
+        "sphereRadiusU": 0.048,
+        "sphereRadiusV": 0.048,
+        "sphereRadiusZ": 0.009,
+        "turbulence": 0.14,
+        "turbulenceScaleUV": 9,
+        "velocityDamping": 0.91,
+        "velocityWanderStrength": 0.05,
+        "velocityWanderFreq": { "min": 0.5, "max": 1.0 },
+        "speedOscillationAmp": 0.05,
+        "speedOscillationFreq": { "min": 0.28, "max": 1.05 },
+        "oscillateAlphaAmp": { "min": 0.4, "max": 0.7},
+        "oscillateAlphaFreq": { "min": 5, "max": 25},
+        "oscillateScaleAmp": { "min": 0.9, "max": 1.1},
+        "oscillateScaleFreq": { "min": 10, "max": 30},
+        "color": "0x96ff6E",
+        "colorVariance": 0.1,
+        "opacity": { "min": 0.58, "max": 0.98 },
+        "trailEnabled": true,
+        "trailPlaybackSpeed": 1,
+        "trailSpawnPerSecond": { "min": 5, "max": 10 },
+        "trailLifetime": { "min": 0.24, "max": 0.52},
+        "trailSpawnRadiusUV": { "min": 0.002, "max": 0.002},
+        "trailSpawnOppositeMotionBias": 0.25,
+        "trailSpawnOppositeMotionSpeedCoupling": 0.1,
+        "trailDriftUVPerSec": { "min": 0.004, "max": 0.006 },
+        "trailScaleStart": { "min": 0.2, "max": 1.0},
+        "trailScaleEnd": { "min": 0.035, "max": 0.09},
+        "trailScaleUsesParentBase": true,
+        "trailPeakOpacity": { "min": 0.18, "max": 0.38 },
+        "trailFadePower": 1.35,
+        "trailMaxConcurrent": 14,
+        "trailFollowParentEnvelope": true,
+        "trailDepthBias": 0.002,
+        "trailDepthDriftPerSec": { "min": -0.003, "max": 0.003 },
+        "trailBlendMode": "AdditiveBlending",
+        "trailAlphaTest": 0.001,
+        "instanceBufferHeadroom": 2.4
+      },
+      "spriteClusters": [
+        {
+          "name": "TreeSpirits",
+          "position": { "x": 0.45, "y": 0.62, "z": 0 },
+          "sphereRadiusU": 0.075,
+          "sphereRadiusV": 0.14,
+          "sphereRadiusZ": 0.024
+        }
+      ]
+    },
     "waterRipple": {
       "passUvBounds": {
         "minX": 0.47,
