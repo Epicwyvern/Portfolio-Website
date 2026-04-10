@@ -29,7 +29,8 @@ function num(v, fb) {
     return Number.isFinite(n) ? n : fb;
 }
 
-/** UV ellipse radii: `sphereRadiusU` / `sphereRadiusV`, or legacy `sphereRadiusUV` for both. */
+/** UV ellipse radii: `sphereRadiusU` / `sphereRadiusV`, or legacy `sphereRadiusUV` for both.
+ *  Offset is rotated in the UV plane by `sphereRotationDegrees` (applied in `_spawnParticle` from live `config`). */
 function ellipseRadiiUV(cfg) {
     const legacy = num(cfg.sphereRadiusUV, NaN);
     const ru0 = num(cfg.sphereRadiusU, NaN);
@@ -210,12 +211,13 @@ class SpritesEffect extends BaseEffect {
                 this._instancedMesh.renderOrder = 1;
             }
             this._refreshDisabledClusters();
+            this._warmStartClusters();
             this._unsubSpritesChange = this.parallax?.onSpritesIndividualChange?.(() => {
                 this._refreshDisabledClusters();
             });
 
-            this.time = 0;
             this.isInitialized = true;
+            this.update(1e-6);
             log(`SpritesEffect: ${this._clusterSystems.length} clusters, head=${headCap} trail=${trailCap}`);
         } catch (e) {
             console.error('SpritesEffect: init failed', e);
@@ -240,6 +242,7 @@ class SpritesEffect extends BaseEffect {
                 sphereRadiusU: 0.045,
                 sphereRadiusV: 0.045,
                 sphereRadiusZ: 0.018,
+                sphereRotationDegrees: 0,
                 turbulence: 0.42,
                 turbulenceScaleUV: 9,
                 velocityDamping: 0.92,
@@ -274,6 +277,9 @@ class SpritesEffect extends BaseEffect {
                 trailAlphaTest: 0.001,
                 instanceBufferHeadroom: 2.35,
                 opacity: { min: 0.55, max: 1.0 },
+                warmStartEnabled: true,
+                warmStartCount: { min: 0, max: 0 },
+                warmStartAgeFraction: { min: 0.35, max: 0.65 },
             },
             spriteClusters: [
                 {
@@ -289,6 +295,9 @@ class SpritesEffect extends BaseEffect {
 
     _normalizeConfig(raw) {
         const d = raw.defaults && typeof raw.defaults === 'object' ? { ...raw.defaults } : {};
+        if (Object.prototype.hasOwnProperty.call(raw, 'warmStartEnabled')) {
+            d.warmStartEnabled = raw.warmStartEnabled !== false && raw.warmStartEnabled !== 'false';
+        }
         if (d.color && typeof d.color === 'string') {
             d.color = effectConfigHexToInt(d.color, 0xb8ff66);
         } else if (typeof d.color !== 'number') {
@@ -336,6 +345,94 @@ class SpritesEffect extends BaseEffect {
                 centerV: num(center.y, 0.5),
                 centerZ: num(center.z, 0),
             });
+        }
+    }
+
+    /**
+     * Spawn a random count of particles per cluster and integrate them on a shared timeline so turbulence
+     * (uses `this.time`) matches the live effect. Skipped when `warmStartEnabled` is false or
+     * `warmStartCount` min/max are both 0.
+     */
+    _warmStartClusters() {
+        this.time = 0;
+        if (!this._clusterSystems?.length) {
+            return;
+        }
+
+        const dt = 0.02;
+        const maxSim = 120;
+        let simTime = 0;
+
+        for (const system of this._clusterSystems) {
+            if (this._disabledClusters?.has(system.name)) continue;
+
+            const cfg = system.config;
+            if (cfg.warmStartEnabled === false || cfg.warmStartEnabled === 'false') continue;
+
+            const cntR = scalarOrRange(cfg, 'warmStartCount', 0, 0);
+            const want = Math.floor(randRange(Math.min(cntR.min, cntR.max), Math.max(cntR.min, cntR.max)));
+            const n = Math.max(0, Math.min(want, system.particleCap));
+            if (n <= 0) continue;
+
+            const ageFracR = range(cfg, 'warmStartAgeFraction', 0.35, 0.65);
+            const lifeR = range(cfg, 'lifetimeSeconds', 3, 8);
+
+            for (let i = 0; i < n; i++) {
+                this._spawnParticle(system, lifeR);
+                const p = system.particles[system.particles.length - 1];
+                const frac = randRange(ageFracR.min, ageFracR.max);
+                const clamped = Math.max(0.08, Math.min(0.92, frac));
+                p._warmTargetAge = Math.min(p.lifetime * clamped, p.lifetime * 0.999);
+            }
+        }
+
+        while (simTime < maxSim) {
+            let anyWarming = false;
+            for (const system of this._clusterSystems) {
+                if (this._disabledClusters?.has(system.name)) continue;
+                for (const p of system.particles) {
+                    if (p._warmTargetAge != null && p.age < p._warmTargetAge) {
+                        anyWarming = true;
+                        break;
+                    }
+                }
+                if (anyWarming) break;
+            }
+            if (!anyWarming) break;
+
+            this.time = simTime;
+            for (const system of this._clusterSystems) {
+                if (this._disabledClusters?.has(system.name)) continue;
+                const cfg = system.config;
+                for (const p of system.particles) {
+                    if (p._warmTargetAge == null || p.age >= p._warmTargetAge) continue;
+                    const h = Math.min(dt, p._warmTargetAge - p.age);
+                    this._integrateParticle(p, cfg, h);
+                    p.age += h;
+                }
+            }
+            simTime += dt;
+        }
+
+        this.time = simTime;
+
+        for (const system of this._clusterSystems) {
+            if (this._disabledClusters?.has(system.name)) continue;
+            for (const p of system.particles) {
+                if (p._warmTargetAge != null) delete p._warmTargetAge;
+                p.trailNextEmit = this.time + Math.random() * 0.06;
+                if (p.trailMotes?.length) p.trailMotes.length = 0;
+            }
+        }
+
+        if (simTime > 0) {
+            for (const system of this._clusterSystems) {
+                if (this._disabledClusters?.has(system.name)) continue;
+                const cfg = system.config;
+                const spawnR = range(cfg, 'spawnPerSecond', 2, 5);
+                const interval = 1 / randRange(spawnR.min, spawnR.max);
+                system.nextSpawnTime = this.time + interval * (0.85 + Math.random() * 0.3);
+            }
         }
     }
 
@@ -618,8 +715,14 @@ class SpritesEffect extends BaseEffect {
             z = (Math.random() * 2 - 1) * rz;
         } while (x * x / (ru * ru) + y * y / (rv * rv) + z * z / (rz * rz) > 1);
 
-        const u = system.centerU + x;
-        const v = system.centerV + y;
+        const rotDeg = num(cfg.sphereRotationDegrees, 0);
+        const rotRad = (rotDeg * Math.PI) / 180;
+        const c = Math.cos(rotRad);
+        const s = Math.sin(rotRad);
+        const xRot = x * c - y * s;
+        const yRot = x * s + y * c;
+        const u = system.centerU + xRot;
+        const v = system.centerV + yRot;
         const zOff = system.centerZ + z;
 
         const speedR = range(cfg, 'speedUVPerSec', 0.02, 0.06);
